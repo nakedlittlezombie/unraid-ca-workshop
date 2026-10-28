@@ -12,6 +12,7 @@ The app is intended to run on the same computer as the Docker engine used for te
 - Check repository metadata, license and template XML files with a local preflight.
 - Browse, create, edit, and delete repository files in the browser. Edits are saved to the local folder; use Git to review, commit, and push them.
 - Use **Template editor** to change template metadata and Docker configuration fields in a form, inspect the generated XML preview, and save back to the repository.
+- Use **CA profile editor** to create or update the root `ca_profile.xml` with maintainer icon, profile text, donation details, website, and support forum fields. Existing additional XML elements are retained.
 - Start a new template without Compose by choosing **Start from dummy XML** in the visual editor. It uses a bundled, editable starter based on [nwithan8's dummy template](https://github.com/nwithan8/unraid_templates/blob/main/dummy.xml.example) and creates a new file under `templates/`.
 - Create a public repository from Unraid's [`unraid-community-apps-starter`](https://github.com/unraid/unraid-community-apps-starter) template with a GitHub token, clone it locally, and fill in the starter metadata.
 - Import a Docker Compose YAML file, map each service into the same bundled dummy XML starter used by the visual editor, then continue editing each result there before saving it into the repository.
