@@ -14,7 +14,7 @@ The app is intended to run on the same computer as the Docker engine used for te
 - Use **Template editor** to change template metadata and Docker configuration fields in a form, inspect the generated XML preview, and save back to the repository.
 - Start a new template without Compose by choosing **Start from dummy XML** in the visual editor. It uses a bundled, editable starter based on [nwithan8's dummy template](https://github.com/nwithan8/unraid_templates/blob/main/dummy.xml.example) and creates a new file under `templates/`.
 - Create a public repository from Unraid's [`unraid-community-apps-starter`](https://github.com/unraid/unraid-community-apps-starter) template with a GitHub token, clone it locally, and fill in the starter metadata.
-- Import a Docker Compose YAML file, generate one editable CA Docker template per service, review warnings and XML, then save the templates into the connected repository.
+- Import a Docker Compose YAML file, map each service into the same bundled dummy XML starter used by the visual editor, then continue editing each result there before saving it into the repository.
 - Review recent actions recorded by this local app.
 
 ### Submit through Community Apps

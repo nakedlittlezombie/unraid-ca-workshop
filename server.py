@@ -400,7 +400,7 @@ def inspect_repo(repo):
             if root.tag=="Plugin" and not result["plugin_url"]: result["errors"].append("Missing <PluginURL>")
             if root.tag not in ("Container","Plugin"): result["errors"].append("Root element must be <Container> or <Plugin>")
             starter_text=" ".join(x.text or "" for x in root.iter())
-            if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app|AppTitle|author/container|author/app|dummy-icon|dummy\.xml|dummy_screenshot|keywords related to the app|default_value|appdata/dummy|A description of the app|true\|false",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
+            if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app|AppTitle|author/container|author/app|your-registry|dummy-icon|dummy\.xml|dummy_screenshot|keywords related to the app|default_value|appdata/dummy|A description of the app|true\|false|2025-01-01",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
             result["ok"]=not result["errors"]
         except ET.ParseError as exc: result["errors"].append(f"Malformed XML: {exc}")
         scans.append(result)
@@ -528,16 +528,34 @@ def compose_template(service_name, service, project_name):
     webui=""
     web_port=next((item for item in configs if item["type"]=="Port" and item["mode"]=="tcp"),None)
     if web_port: webui=f"http://[IP]:[PORT:{web_port['target']}]"
-    def text(value): return xml_escape(compose_value(value))
-    xml=["<Container version=\"2\">",f"  <Name>{text(title)}</Name>",f"  <Repository>{text(image)}</Repository>","  <Network>bridge</Network>","  <MyIP></MyIP>","  <Shell>sh</Shell>","  <Privileged>false</Privileged>"]
-    if support: xml.append(f"  <Support>{text(support)}</Support>")
-    if project: xml.append(f"  <Project>{text(project)}</Project>")
-    xml.extend([f"  <Overview>{text(overview)}</Overview>",f"  <WebUI>{text(webui)}</WebUI>"])
+    starter=ET.parse(ROOT/"fixtures"/"dummy-template.xml").getroot()
+    def set_value(tag,value):
+        node=starter.find(tag)
+        if node is None and value:
+            node=ET.SubElement(starter,tag)
+        if node is not None:
+            if value: node.text=compose_value(value)
+            else: starter.remove(node)
+    image_reference=image.split("@",1)[0]
+    image_parts=image_reference.split("/")
+    if len(image_parts)>1 and ("." in image_parts[0] or ":" in image_parts[0] or image_parts[0]=="localhost"):
+        registry="https://"+image_parts[0]
+    else:
+        hub_parts=image_parts[1:] if image_parts[0]=="docker.io" else image_parts
+        hub_name="/".join(hub_parts).rsplit(":",1)[0]
+        if len(hub_parts)==1: hub_name="_/"+hub_name
+        registry="https://hub.docker.com/r/"+hub_name
+    set_value("Name",title); set_value("Repository",image); set_value("Registry",registry); set_value("Network","bridge")
+    set_value("WebUI",webui); set_value("Support",support); set_value("Project",project); set_value("Overview",overview)
+    set_value("ExtraSearchTerms",f"{service_name} {project_name}")
+    for node in starter.findall("Config"): starter.remove(node)
     for config in configs:
-        attrs={"Name":config["name"],"Target":config["target"],"Default":config["default"],"Mode":config["mode"],"Description":config["description"],"Type":config["type"],"Display":"always","Required":config["required"],"Mask":config["mask"]}
-        xml.append("  <Config "+" ".join(f"{key}={quoteattr(compose_value(value))}" for key,value in attrs.items())+"/>")
-    xml.append("</Container>")
-    return {"service":service_name,"name":title,"image":image,"path":f"templates/{service_slug}.xml","content":"\n".join(xml)+"\n","warnings":warnings}
+        attrs={"Name":compose_value(config["name"]),"Target":compose_value(config["target"]),"Default":compose_value(config["default"]),"Description":compose_value(config["description"]),"Type":compose_value(config["type"]),"Required":compose_value(config["required"]),"Mask":compose_value(config["mask"])}
+        if config["mode"]: attrs["Mode"]=compose_value(config["mode"])
+        attrs["Display"]="always"
+        ET.SubElement(starter,"Config",attrs)
+    content=ET.tostring(starter,encoding="unicode",xml_declaration=True)
+    return {"service":service_name,"name":title,"image":image,"path":f"templates/{service_slug}.xml","content":content,"warnings":warnings}
 
 def convert_compose_document(content):
     if not isinstance(content,str) or not content.strip(): raise ValueError("Choose a Compose file or paste its contents first.")
