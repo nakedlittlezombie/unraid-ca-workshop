@@ -400,7 +400,7 @@ def inspect_repo(repo):
             if root.tag=="Plugin" and not result["plugin_url"]: result["errors"].append("Missing <PluginURL>")
             if root.tag not in ("Container","Plugin"): result["errors"].append("Root element must be <Container> or <Plugin>")
             starter_text=" ".join(x.text or "" for x in root.iter())
-            if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
+            if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app|AppTitle|author/container|author/app|dummy-icon|dummy\.xml|dummy_screenshot|keywords related to the app|default_value|appdata/dummy|A description of the app|true\|false",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
             result["ok"]=not result["errors"]
         except ET.ParseError as exc: result["errors"].append(f"Malformed XML: {exc}")
         scans.append(result)

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Starter based on https://github.com/nwithan8/unraid_templates/blob/main/dummy.xml.example -->
+<Container version="2">
+  <Name>AppTitle</Name>
+  <Repository>author/container:latest</Repository>
+  <Registry>https://hub.docker.com/r/author/container</Registry>
+  <Network>bridge</Network>
+  <WebUI>http://[IP]:[PORT:5000]/</WebUI>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/author/app/issues</Support>
+  <Project>https://github.com/author/app</Project>
+  <Overview>A description of the app.</Overview>
+  <Beta>false</Beta>
+  <Category>Productivity: Tools: Other: Status:Stable</Category>
+  <ExtraSearchTerms>keywords related to the app</ExtraSearchTerms>
+  <Icon>https://raw.githubusercontent.com/nwithan8/unraid_templates/master/images/dummy-icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/nwithan8/unraid_templates/main/templates/dummy.xml</TemplateURL>
+  <Screenshot>https://raw.githubusercontent.com/nwithan8/unraid_templates/master/images/dummy_screenshot_1.png</Screenshot>
+  <Changes>### 2025-01-01
+
+Initial release</Changes>
+  <Config Name="Web UI Port" Target="5000" Default="5000" Mode="tcp" Description="Container Port: 5000" Type="Port" Display="always-hide" Required="true" Mask="false"/>
+  <Config Name="App Data Path" Target="/app/data" Default="/mnt/user/appdata/dummy/data" Description="Path to app data" Type="Path" Display="always-hide" Required="true" Mask="false"/>
+  <Config Name="Environmental Variable" Target="ENV_VAR" Default="default_value" Description="An example environmental variable" Type="Variable" Display="always-hide" Required="true" Mask="false"/>
+  <Config Name="Environment Variable 2" Target="ENV_VAR_2" Default="true|false" Description="Another example environmental variable" Type="Variable" Display="always-hide" Required="true" Mask="false"/>
+  <Config Name="App Port" Target="1000" Default="1000" Mode="tcp" Description="Container Port: 1000" Type="Port" Display="always-hide" Required="true" Mask="false"/>
+  <Config Name="App Path" Target="/internal/path" Default="/mnt/user/appdata/dummy/path" Description="Path to internal app data" Type="Path" Display="always-hide" Required="true" Mask="false"/>
+</Container>
