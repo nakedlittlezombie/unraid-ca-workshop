@@ -13,6 +13,7 @@ import subprocess
 import threading
 import tarfile
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.request
@@ -31,6 +32,8 @@ PACKAGE_MAX_BYTES = 32 * 1024 * 1024
 PACKAGE_LOCK = threading.Lock()
 PACKAGE_STATUS = {"state":"idle","bytes":0,"total":0,"error":""}
 PACKAGE_LATEST = None
+GITHUB_REPO_CHECK_CACHE = {}
+GITHUB_REPO_CHECK_LOCK = threading.Lock()
 try:
     package_meta = json.loads(PACKAGE_META_FILE.read_text())
     package_filename = package_meta.get("filename", "")
@@ -177,6 +180,55 @@ def github_api(token, path, payload=None):
         except (ValueError,AttributeError): detail="GitHub request failed."
         raise ValueError(str(detail).replace(token,"[redacted]")) from None
 
+def check_public_github_repo(repo):
+    """Check that the connected repository's GitHub origin is public and usable by CA."""
+    try:
+        remote=subprocess.run(["git","-C",str(repo),"remote","get-url","origin"],capture_output=True,text=True,timeout=5,check=True).stdout.strip()
+    except (OSError,subprocess.SubprocessError):
+        return {"ok":False,"manual":True,"detail":"Add a GitHub origin remote to verify visibility and status"}
+    if remote.startswith("git@github.com:"):
+        path=remote[len("git@github.com:"):]
+    else:
+        parsed=urlparse(remote)
+        if parsed.scheme not in ("https","ssh","git") or parsed.hostname != "github.com":
+            return {"ok":False,"manual":True,"detail":"Origin is not a GitHub repository; visibility cannot be checked"}
+        path=parsed.path.lstrip("/")
+    path=path.removesuffix(".git").strip("/")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",path):
+        return {"ok":False,"manual":True,"detail":"Could not identify the GitHub owner and repository from origin"}
+    key=path.lower()
+    with GITHUB_REPO_CHECK_LOCK:
+        cached=GITHUB_REPO_CHECK_CACHE.get(key)
+        if cached and time.time()-cached[0] < 300:
+            return dict(cached[1])
+    request=urllib.request.Request(f"{GITHUB_API}/repos/{path}",headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"CA-Workshop"})
+    try:
+        with urllib.request.build_opener(SameHostRedirect("api.github.com")).open(request,timeout=8) as response:
+            data=json.loads(response.read(1_000_000))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            result={"ok":False,"manual":False,"detail":"Not publicly accessible on GitHub (private or unavailable)"}
+        elif exc.code == 403 and exc.headers.get("X-RateLimit-Remaining") == "0":
+            result={"ok":False,"manual":True,"detail":"GitHub API rate limit reached; try again later"}
+        else:
+            result={"ok":False,"manual":True,"detail":f"GitHub could not verify this repository (HTTP {exc.code})"}
+    except (OSError,ValueError,urllib.error.URLError):
+        result={"ok":False,"manual":True,"detail":"GitHub could not be reached; visibility and status were not verified"}
+    else:
+        if data.get("private") is True or data.get("visibility")=="private":
+            result={"ok":False,"manual":False,"detail":"Repository is private; make it public for CA submissions"}
+        elif data.get("archived") is True:
+            result={"ok":False,"manual":False,"detail":"Repository is archived; unarchive it for CA submissions"}
+        elif data.get("disabled") is True:
+            result={"ok":False,"manual":False,"detail":"Repository is disabled on GitHub"}
+        elif data.get("visibility")=="public" or data.get("private") is False:
+            result={"ok":True,"manual":False,"detail":"Public GitHub repository; active and not archived or disabled"}
+        else:
+            result={"ok":False,"manual":True,"detail":"GitHub did not return enough repository status to verify it"}
+    with GITHUB_REPO_CHECK_LOCK:
+        GITHUB_REPO_CHECK_CACHE[key]=(time.time(),result)
+    return dict(result)
+
 def bootstrap_profile(repo_dir, owner, repo_name, overview, support_url):
     for file in repo_dir.rglob("*"):
         if not file.is_file() or ".git" in file.relative_to(repo_dir).parts or file.stat().st_size>1_000_000: continue
@@ -315,7 +367,7 @@ def inspect_repo(repo):
         {"id":"profile-content", "label":"Non-empty <Profile> section", "ok":False, "detail":"Repository overview text"},
         {"id":"license", "label":"License file at repository root", "ok":False, "detail":license_file.name if license_file else "Add an OSI-approved LICENSE"},
         {"id":"templates", "label":"Docker templates and/or plugin wrappers", "ok":bool(templates), "detail":f"{len(templates)} XML file(s) found"},
-        {"id":"public-repository", "label":"Repository is public and active", "ok":False, "manual":True, "detail":"Verify visibility and activity on GitHub"},
+        {"id":"public-repository", "label":"Repository is public and active", **check_public_github_repo(repo)},
     ]
     if license_file:
         license_text=license_file.read_text(errors="replace")
