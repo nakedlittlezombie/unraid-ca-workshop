@@ -870,6 +870,44 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok":True,"path":rel})
             except OSError as exc:self.send_json({"error":str(exc)},400)
             return
+        if self.path=="/api/repo/file/upload":
+            rel=str(data.get("path","")).strip(); mime=str(data.get("type","")); encoded=str(data.get("data",""))
+            if not REPO or not REPO.is_dir() or not rel or Path(rel).is_absolute() or ".git" in Path(rel).parts or any(part in ("",".","..") for part in Path(rel).parts): self.send_json({"error":"Choose an icon file inside the connected repository."},400); return
+            relative=Path(rel)
+            if relative.stem.lower()!="icon" or relative.suffix.lower() not in (".png",".jpg",".jpeg",".webp",".svg"): self.send_json({"error":"Only repository icon images can be replaced with this uploader."},400); return
+            target=(REPO/relative).resolve()
+            if REPO not in target.parents or not target.is_file() or target.stat().st_size>2_000_000: self.send_json({"error":"The selected icon file is unavailable or exceeds 2 MB."},400); return
+            if len(encoded)>3_000_000: self.send_json({"error":"Choose an icon image smaller than 2 MB."},400); return
+            try: content=base64.b64decode(encoded,validate=True)
+            except (ValueError,binascii.Error): self.send_json({"error":"The selected image could not be read."},400); return
+            suffix=relative.suffix.lower(); mime_by_suffix={".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".svg":"image/svg+xml"}
+            if len(content)>2_000_000 or mime!=mime_by_suffix[suffix]: self.send_json({"error":"Keep the replacement image under 2 MB and use the same image format as the current icon."},400); return
+            valid=False
+            if suffix==".png": valid=content.startswith(b"\x89PNG\r\n\x1a\n")
+            elif suffix in (".jpg",".jpeg"): valid=content.startswith(b"\xff\xd8\xff")
+            elif suffix==".webp": valid=len(content)>12 and content[:4]==b"RIFF" and content[8:12]==b"WEBP"
+            else:
+                try:
+                    svg_text=content.decode("utf-8")
+                    if re.search(r"<!DOCTYPE|<!ENTITY",svg_text,re.I): raise ValueError
+                    svg_root=ET.fromstring(svg_text)
+                    valid=svg_root.tag.rsplit("}",1)[-1].lower()=="svg"
+                    for node in svg_root.iter():
+                        tag=node.tag.rsplit("}",1)[-1].lower()
+                        if tag in ("script","foreignobject","iframe","object","embed"): valid=False
+                        if tag=="style" and re.search(r"@import|url\s*\(\s*['\"]?(?!#)",node.text or "",re.I): valid=False
+                        for key,value in node.attrib.items():
+                            attr=key.rsplit("}",1)[-1].lower()
+                            if attr.startswith("on") or (attr in ("href","src") and value.strip() and not value.strip().startswith("#")) or (attr=="style" and re.search(r"url\s*\(|@import",value,re.I)): valid=False
+                except (UnicodeError,ET.ParseError,ValueError): valid=False
+            if not valid: self.send_json({"error":"The selected file is not a valid, safe image of the current icon format."},400); return
+            try:
+                fd,temp_path=tempfile.mkstemp(prefix=".ca-workshop-icon-",suffix=".tmp",dir=target.parent)
+                with os.fdopen(fd,"wb") as stream: stream.write(content)
+                os.replace(temp_path,target); record_activity("Repository icon replaced",rel)
+                self.send_json({"ok":True,"path":rel})
+            except OSError as exc: self.send_json({"error":str(exc)},400)
+            return
         if self.path=="/api/repo/file/delete":
             rel=str(data.get("path", "")).strip()
             if not REPO or not REPO.is_dir() or not rel or Path(rel).is_absolute() or ".git" in Path(rel).parts: self.send_json({"error":"Choose a file inside the connected repository."},400); return
