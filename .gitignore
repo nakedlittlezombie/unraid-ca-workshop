@@ -1,0 +1,8 @@
+.ca-workshop-state.json
+.ca-workshop-unraid.json
+__pycache__/
+*.py[cod]
+*.txz
+.venv/
+venv/
+.DS_Store

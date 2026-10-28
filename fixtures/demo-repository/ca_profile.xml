@@ -1,0 +1,4 @@
+<CommunityApplications>
+  <Profile>CA Workshop local fixture for checking repository browsing, validation, catalog display, and Docker template installation.</Profile>
+  <WebPage>http://127.0.0.1:8765</WebPage>
+</CommunityApplications>
