@@ -1,5 +1,8 @@
 .ca-workshop-state.json
 .ca-workshop-unraid.json
+.ca-workshop-package.json
+.ca-workshop-package.tmp
+.ca-workshop-package.download
 __pycache__/
 *.py[cod]
 *.txz

@@ -35,13 +35,7 @@ The catalog browser uses public CA web endpoints that are not documented as a st
 
 ### Inspect the supplied Community Applications package
 
-The Package sandbox indexes and previews files from the Unraid Community Applications `.txz` package without running its PHP plugin code. The package is intentionally not included in this Git repository. To enable this view, copy the package into the project folder using the expected filename:
-
-```text
-community.applications-2026.07.21-x86_64-1.txz
-```
-
-The archive is read-only in the app. It is optional for repository editing, catalog browsing, and Docker template testing.
+The Package sandbox indexes and previews files from the Unraid Community Applications `.txz` package without running its PHP plugin code. On first use, CA Workshop checks the official [`unraid/community.applications` archive folder](https://github.com/unraid/community.applications/tree/master/archive) and downloads the latest dated x86_64 package automatically. Use **Check for updates** to compare the local copy with GitHub; if a newer build is available, choose **Download update**. Downloads are saved locally, checked against GitHub's published file hash and size, and validated as a TXZ archive before being activated. Previous package files remain available on disk. The archive is optional for repository editing, catalog browsing, and Docker template testing.
 
 ### Connect an Unraid server
 
@@ -57,7 +51,7 @@ The server's authorization screen can use its configured sign-in, including Unra
 - Git for working with local repositories and GitHub clones.
 - A GitHub account and personal access token only if you use the repository bootstrap feature.
 - An Unraid server only if you use server inspection and container controls.
-- The optional `.txz` package described above for Package sandbox browsing.
+- An internet connection on first use and when checking for package updates.
 
 ## Start CA Workshop
 
@@ -82,7 +76,7 @@ To stop the app, interrupt the running process in the terminal where it was star
 
 ## Local data and credentials
 
-The app stores its selected repository and local activity in `.ca-workshop-state.json` in the project folder. The Unraid API key is stored separately in `.ca-workshop-unraid.json` with owner-only file permissions. Both files are ignored by Git. Disconnecting the server removes the saved API key file.
+The app stores its selected repository and local activity in `.ca-workshop-state.json` in the project folder. The Unraid API key is stored separately in `.ca-workshop-unraid.json` with owner-only file permissions. The downloaded package and its version record are also stored locally. These local files are ignored by Git. Disconnecting the server removes the saved API key file.
 
 The GitHub token used for repository creation is sent to GitHub for that request and is not saved by CA Workshop. Review the requested permissions before providing a token, and revoke it through GitHub when it is no longer needed.
 
@@ -99,7 +93,7 @@ The Unraid connection can update or remove existing containers when you grant th
 - **CA portal sign-in does not work in the embedded view:** Choose **Open in new tab** and sign in there.
 - **Unraid connection fails:** Confirm the host address is reachable from this computer, restart authorization from the app, and grant the requested scopes on the Unraid server.
 - **Repository files do not appear:** Connect the local clone's root folder and make sure the repository files are present. Browser editor changes are saved to that local folder, not pushed to GitHub automatically.
-- **Package sandbox is empty:** Place the optional `.txz` archive in the project folder with the exact filename shown above.
+- **Package sandbox is empty:** Wait for the first download to finish. If it fails, check your internet connection and choose **Check for updates** to retry.
 
 ## Project layout
 

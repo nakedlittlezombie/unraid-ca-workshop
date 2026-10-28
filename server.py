@@ -21,7 +21,24 @@ from xml.sax.saxutils import escape as xml_escape
 ROOT = Path(__file__).resolve().parent
 CA_ORIGIN = "https://ca.unraid.net"
 GITHUB_API = "https://api.github.com"
-ARCHIVE = ROOT / "community.applications-2026.07.21-x86_64-1.txz"
+ARCHIVE = ROOT / ".ca-workshop-package.txz"
+LEGACY_ARCHIVE = ROOT / "community.applications-2026.07.21-x86_64-1.txz"
+PACKAGE_META_FILE = ROOT / ".ca-workshop-package.json"
+PACKAGE_API_PATH = "/repos/unraid/community.applications/contents/archive?ref=master"
+PACKAGE_NAME_RE = re.compile(r"^community\.applications-(\d{4}\.\d{2}\.\d{2})([a-z]?)-x86_64-1\.txz$")
+PACKAGE_MAX_BYTES = 32 * 1024 * 1024
+PACKAGE_LOCK = threading.Lock()
+PACKAGE_STATUS = {"state":"idle","bytes":0,"total":0,"error":""}
+PACKAGE_LATEST = None
+try:
+    package_meta = json.loads(PACKAGE_META_FILE.read_text())
+    package_filename = package_meta.get("filename", "")
+    if re.fullmatch(r"community\.applications-\d{4}\.\d{2}\.\d{2}[a-z]?-x86_64-1\.txz", package_filename):
+        candidate = ROOT / package_filename
+        if candidate.is_file(): ARCHIVE = candidate
+except (OSError, ValueError, TypeError):
+    pass
+if not ARCHIVE.is_file() and LEGACY_ARCHIVE.is_file(): ARCHIVE = LEGACY_ARCHIVE
 STATE_FILE = ROOT / ".ca-workshop-state.json"
 UNRAID_SECRET_FILE = ROOT / ".ca-workshop-unraid.json"
 INSTALL_JOBS = {}
@@ -60,6 +77,94 @@ class SameHostRedirect(urllib.request.HTTPRedirectHandler):
         if parsed.scheme!="https" or parsed.hostname!=self.host or parsed.port not in (None,443):
             raise ValueError("The remote service redirected outside its approved HTTPS host.")
         return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+def package_version(filename):
+    match=PACKAGE_NAME_RE.fullmatch(Path(filename).name)
+    return (match.group(1),match.group(2)) if match else ("","")
+
+def package_git_blob_sha(data):
+    return hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest()
+
+def package_status_payload():
+    current_version,current_suffix=package_version(ARCHIVE.name)
+    current_sha=""
+    if ARCHIVE.is_file():
+        try:
+            with ARCHIVE.open("rb") as file: current_sha=package_git_blob_sha(file.read(PACKAGE_MAX_BYTES+1))
+        except OSError: pass
+    status=dict(PACKAGE_STATUS)
+    latest=PACKAGE_LATEST or {}
+    current_exists=ARCHIVE.is_file()
+    update_available=bool(latest and (not current_exists or (latest["date"],latest["suffix"])>(current_version,current_suffix) or latest.get("sha")!=current_sha))
+    return {**status,"available":current_exists,"current_version":current_version+(current_suffix if current_version else ""),"filename":ARCHIVE.name if current_exists else "","latest_version":latest.get("date","")+(latest.get("suffix","") if latest else ""),"latest_filename":latest.get("name",""),"update_available":update_available}
+
+def fetch_latest_package():
+    request=urllib.request.Request(GITHUB_API+PACKAGE_API_PATH,headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"CA-Workshop"})
+    with urllib.request.build_opener(SameHostRedirect("api.github.com")).open(request,timeout=30) as response:
+        entries=json.loads(response.read(4_000_000))
+    candidates=[]
+    for entry in entries if isinstance(entries,list) else []:
+        name=entry.get("name","")
+        match=PACKAGE_NAME_RE.fullmatch(name)
+        if not match or entry.get("type")!="file": continue
+        size=entry.get("size",0)
+        sha=entry.get("sha","")
+        if not isinstance(size,int) or not 1<=size<=PACKAGE_MAX_BYTES or not re.fullmatch(r"[a-f0-9]{40}",sha): continue
+        candidates.append({"date":match.group(1),"suffix":match.group(2),"name":name,"size":size,"sha":sha,"url":f"https://raw.githubusercontent.com/unraid/community.applications/master/archive/{name}"})
+    if not candidates: raise ValueError("No official x86_64 Community Applications package was found in the archive folder.")
+    return max(candidates,key=lambda item:(item["date"],item["suffix"]))
+
+def package_update_worker(download_if_needed):
+    global ARCHIVE, PACKAGE_LATEST
+    temporary=ROOT/".ca-workshop-package.download"
+    try:
+        latest=fetch_latest_package()
+        PACKAGE_LATEST=latest
+        current_version,current_suffix=package_version(ARCHIVE.name)
+        current_sha=""
+        if ARCHIVE.is_file():
+            with ARCHIVE.open("rb") as file: current_sha=package_git_blob_sha(file.read(PACKAGE_MAX_BYTES+1))
+        needs_update=not ARCHIVE.is_file() or (latest["date"],latest["suffix"])>(current_version,current_suffix) or latest["sha"]!=current_sha
+        if not needs_update:
+            PACKAGE_STATUS.update({"state":"up-to-date","bytes":0,"total":latest["size"],"error":""})
+            return
+        PACKAGE_STATUS.update({"state":"update-available","bytes":0,"total":latest["size"],"error":""})
+        if not download_if_needed: return
+        PACKAGE_STATUS.update({"state":"downloading","bytes":0,"total":latest["size"],"error":""})
+        request=urllib.request.Request(latest["url"],headers={"User-Agent":"CA-Workshop","Accept":"application/octet-stream"})
+        digest=hashlib.sha1()
+        byte_count=0
+        with urllib.request.build_opener(SameHostRedirect("raw.githubusercontent.com")).open(request,timeout=45) as response, temporary.open("wb") as output:
+            while True:
+                block=response.read(64*1024)
+                if not block: break
+                byte_count+=len(block)
+                if byte_count>PACKAGE_MAX_BYTES or byte_count>latest["size"]: raise ValueError("The package download exceeded its published size.")
+                output.write(block); digest.update(block)
+                PACKAGE_STATUS["bytes"]=byte_count
+        if byte_count!=latest["size"] or digest.hexdigest()!=latest["sha"]:
+            raise ValueError("The downloaded archive did not match GitHub's published size and file hash.")
+        with tarfile.open(temporary,"r:xz") as archive:
+            members=archive.getmembers()
+            if len(members)>50000 or not any(member.name.startswith("./usr/local/emhttp/plugins/community.applications/") for member in members):
+                raise ValueError("The downloaded archive does not look like the expected Community Applications package.")
+        destination=ROOT/latest["name"]
+        os.replace(temporary,destination)
+        meta_tmp=PACKAGE_META_FILE.with_suffix(".tmp")
+        meta_tmp.write_text(json.dumps({"filename":latest["name"],"version":latest["date"]+latest["suffix"],"sha":latest["sha"]},indent=2))
+        os.replace(meta_tmp,PACKAGE_META_FILE)
+        ARCHIVE=destination
+        PACKAGE_STATUS.update({"state":"downloaded","bytes":byte_count,"total":latest["size"],"error":""})
+    except Exception as exc:
+        try: temporary.unlink(missing_ok=True)
+        except OSError: pass
+        PACKAGE_STATUS.update({"state":"failed","error":str(exc)[:500]})
+
+def start_package_check(download_if_needed=False):
+    with PACKAGE_LOCK:
+        if PACKAGE_STATUS.get("state") in ("checking","downloading"): return
+        PACKAGE_STATUS.update({"state":"checking","bytes":0,"total":0,"error":""})
+        threading.Thread(target=package_update_worker,args=(download_if_needed,),daemon=True).start()
 
 def github_api(token, path, payload=None):
     request=urllib.request.Request(GITHUB_API+path,data=json.dumps(payload).encode() if payload is not None else None,headers={"Accept":"application/vnd.github+json","Authorization":f"Bearer {token}","X-GitHub-Api-Version":"2022-11-28","User-Agent":"CA-Workshop"},method="POST" if payload is not None else "GET")
@@ -328,15 +433,17 @@ class Handler(BaseHTTPRequestHandler):
             except (UnicodeError,OSError): self.send_json({"error":"This file cannot be previewed as text."},400); return
             self.send_json({"name":rel,"content":content}); return
         if self.path.startswith("/api/package"):
+            if not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
             try:
                 query=parse_qs(urlparse(self.path).query); filename=query.get("file",[None])[0]
+                if not ARCHIVE.is_file(): self.send_json(package_status_payload()); return
                 if filename:
                     with tarfile.open(ARCHIVE,"r:xz") as archive:
                         member=archive.getmember(filename)
                         if not member.isfile() or member.size>2_000_000: self.send_json({"error":"Only regular files up to 2 MB can be previewed."},400); return
                         stream=archive.extractfile(member); content=stream.read().decode("utf-8","replace") if stream else ""
                     self.send_json({"name":filename,"content":content}); return
-                self.send_json({"archive":ARCHIVE.name,"entries":package_entries()})
+                self.send_json({**package_status_payload(),"archive":ARCHIVE.name,"entries":package_entries()})
             except Exception as e:self.send_json({"error":str(e)},500)
             return
         if self.path=="/api/docker/containers":
@@ -352,6 +459,10 @@ class Handler(BaseHTTPRequestHandler):
         global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST
         try: data=self.body()
         except Exception:self.send_json({"error":"Invalid JSON request"},400); return
+        if self.path=="/api/package/check":
+            start_package_check(download_if_needed=False); self.send_json(package_status_payload(),202); return
+        if self.path=="/api/package/download":
+            start_package_check(download_if_needed=True); self.send_json(package_status_payload(),202); return
         if self.path=="/api/repo/connect":
             path=Path(os.path.expanduser(data.get("path",""))).resolve()
             if not path.is_dir(): self.send_json({"error":"That folder does not exist."},400); return
@@ -551,5 +662,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error":"Not found"},404)
 
 if __name__=="__main__":
+    if not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
     print("CA Workshop: http://127.0.0.1:8765")
     ThreadingHTTPServer(("127.0.0.1",8765),Handler).serve_forever()

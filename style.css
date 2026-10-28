@@ -21,3 +21,4 @@ body{background:var(--bg);color:var(--ink);font-family:'nudista-web',sans-serif}
 @media(max-width:700px){.portal-actions{align-items:flex-end;flex-direction:column}.portal-panel iframe{height:78vh;min-height:550px}.unraid-container-row{align-items:flex-start;flex-direction:column}.unraid-container-actions{justify-content:flex-start}}
 
 .portal-footnote{padding:9px 15px;color:var(--muted);font-size:10px;border-top:1px solid var(--line)}
+.package-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.package-controls .outline{margin:0}.package-message{display:block;margin-top:8px;color:var(--muted);font-size:10px;line-height:1.5}.package-controls .primary{white-space:nowrap}@media(max-width:650px){.package-controls{width:100%;justify-content:flex-start;margin-left:59px}}
