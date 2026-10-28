@@ -10,6 +10,7 @@ CA Workshop is a loopback-only web workbench for preparing Unraid Community Appl
 - `index.html` defines the app screens and forms.
 - `app.js` handles navigation, rendering, and browser-side API calls.
 - `style.css` contains the CA-inspired theme and responsive layout.
+- Template editing uses the browser XML DOM to update values while retaining unedited elements; preserve this when changing the editor.
 - `fixtures/demo-repository/` is the bundled sample repository.
 - `tests/` contains automated checks; inspect them before changing behavior they cover.
 
