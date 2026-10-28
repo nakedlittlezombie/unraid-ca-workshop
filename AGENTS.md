@@ -6,14 +6,14 @@ CA Workshop is a loopback-only web workbench for preparing Unraid Community Appl
 
 ## Code map
 
-- `server.py` serves the browser app and implements the local APIs, GitHub access, package archive updates, Docker adapter, and Unraid API connection.
+- `server.py` serves the browser app and implements the local APIs, Compose YAML conversion, GitHub access, package archive updates, Docker adapter, and Unraid API connection.
 - `index.html` defines the app screens and forms.
 - `app.js` handles navigation, rendering, and browser-side API calls.
 - `style.css` contains the CA-inspired theme and responsive layout.
 - `fixtures/demo-repository/` is the bundled sample repository.
 - `tests/` contains automated checks; inspect them before changing behavior they cover.
 
-Keep each feature's behavior aligned across its server endpoint, UI, and README guidance. Preserve the existing standard-library-only Python approach unless the user asks to change it.
+Keep each feature's behavior aligned across its server endpoint, UI, and README guidance. Keep dependencies small; `PyYAML` is used for safe Docker Compose parsing and is declared in `requirements.txt`.
 
 ## Safety and data
 

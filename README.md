@@ -1,6 +1,6 @@
 # CA Workshop
 
-CA Workshop is a local workbench for preparing Unraid Community Applications submissions and testing Docker templates before you submit them. It brings repository editing, submission guidance, the official Community Apps portal, catalog browsing, and a local Docker sandbox into one browser interface.
+CA Workshop is a local workbench for preparing Unraid Community Applications submissions and testing Docker templates before you submit them. It brings repository editing, Compose-to-template generation, submission guidance, the official Community Apps portal, catalog browsing, and a local Docker sandbox into one browser interface.
 
 The app is intended to run on the same computer as the Docker engine used for testing. It does not replace the official CA submission and review process.
 
@@ -12,6 +12,7 @@ The app is intended to run on the same computer as the Docker engine used for te
 - Check repository metadata, license and template XML files with a local preflight.
 - Browse, create, edit, and delete repository files in the browser. Edits are saved to the local folder; use Git to review, commit, and push them.
 - Create a public repository from Unraid's [`unraid-community-apps-starter`](https://github.com/unraid/unraid-community-apps-starter) template with a GitHub token, clone it locally, and fill in the starter metadata.
+- Import a Docker Compose YAML file, generate one editable CA Docker template per service, review warnings and XML, then save the templates into the connected repository.
 - Review recent actions recorded by this local app.
 
 ### Submit through Community Apps
@@ -45,19 +46,21 @@ The server's authorization screen can use its configured sign-in, including Unra
 
 ## Requirements
 
-- Python 3.10 or later; no third-party Python packages are required.
+- Python 3.10 or later.
 - A modern browser with JavaScript enabled.
 - Docker CLI and a reachable Docker daemon for local template installation.
 - Git for working with local repositories and GitHub clones.
 - A GitHub account and personal access token only if you use the repository bootstrap feature.
 - An Unraid server only if you use server inspection and container controls.
 - An internet connection on first use and when checking for package updates.
+- PyYAML, installed from `requirements.txt` for Compose YAML parsing.
 
 ## Start CA Workshop
 
 From the project folder, run:
 
 ```sh
+python3 -m pip install -r requirements.txt
 python3 server.py
 ```
 
@@ -70,9 +73,10 @@ To stop the app, interrupt the running process in the terminal where it was star
 1. Open **Repository** and connect an existing local clone, or create a new public repository from the starter template.
 2. Review the starter files and edit the repository metadata and templates as needed. Changes are local until you commit and push them with Git.
 3. Run the local preflight and resolve issues it finds.
-4. Use **Browse CA** or **Package sandbox** to inspect apps and exercise supported Docker templates locally.
-5. Use **Submissions** to open the official CA portal and follow its Validate, Scan, and Submit workflow.
-6. Optionally authorize an Unraid server to inspect and control existing containers there.
+4. Use **Compose import** to turn Docker Compose services into CA template XML, review the warnings and generated files, then save them to the repository.
+5. Use **Browse CA** or **Package sandbox** to inspect apps and exercise supported Docker templates locally.
+6. Use **Submissions** to open the official CA portal and follow its Validate, Scan, and Submit workflow.
+7. Optionally authorize an Unraid server to inspect and control existing containers there.
 
 ## Local data and credentials
 

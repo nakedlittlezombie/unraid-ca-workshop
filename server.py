@@ -12,11 +12,12 @@ import shutil
 import subprocess
 import threading
 import tarfile
+import tempfile
 import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, urlencode
-from xml.sax.saxutils import escape as xml_escape
+from xml.sax.saxutils import escape as xml_escape, quoteattr
 
 ROOT = Path(__file__).resolve().parent
 CA_ORIGIN = "https://ca.unraid.net"
@@ -351,6 +352,157 @@ def inspect_repo(repo):
         scans.append(result)
     return {"connected":True,"path":str(repo),"name":repo.name,"checks":checks,"templates":scans,"ready":bool(scans) and all(x["ok"] for x in checks if not x.get("manual")) and all(x["ok"] for x in scans)}
 
+def compose_value(value):
+    if value is None: return ""
+    if isinstance(value,bool): return str(value).lower()
+    return str(value)
+
+def compose_slug(value):
+    return re.sub(r"-+","-",re.sub(r"[^a-z0-9]+","-",str(value).lower())).strip("-")[:70] or "service"
+
+def parse_compose_ports(service, service_name):
+    configs=[]; warnings=[]
+    for entry in service.get("ports",[]) or []:
+        values=[]
+        if isinstance(entry,dict):
+            target=compose_value(entry.get("target")); published=compose_value(entry.get("published")) or target
+            protocol=compose_value(entry.get("protocol","tcp")).lower(); host_ip=compose_value(entry.get("host_ip"))
+            if target: values=[(published,target,protocol,host_ip)]
+        else:
+            spec=compose_value(entry).split("/",1); protocol=spec[1].lower() if len(spec)>1 else "tcp"
+            parts=spec[0].split(":")
+            if len(parts)==1: published=target=parts[0]; host_ip=""
+            elif len(parts)==2: published,target=parts; host_ip=""
+            elif len(parts)==3: host_ip,published,target=parts
+            else: warnings.append(f"{service_name}: port mapping {entry!r} could not be interpreted."); continue
+            if "-" in target or "-" in published:
+                try:
+                    t1,t2=(int(x) for x in target.split("-",1)); p1,p2=(int(x) for x in published.split("-",1))
+                    if t2-t1!=p2-p1 or t2-t1>19: raise ValueError
+                    values=[(str(p1+i),str(t1+i),protocol,host_ip) for i in range(t2-t1+1)]
+                except ValueError:
+                    warnings.append(f"{service_name}: port range {entry!r} was skipped; use matching ranges of 20 ports or fewer."); continue
+            else: values=[(published,target,protocol,host_ip)]
+        for published,target,protocol,host_ip in values:
+            if not published.isdigit() or not target.isdigit() or not 1<=int(published)<=65535 or not 1<=int(target)<=65535:
+                warnings.append(f"{service_name}: invalid port mapping {entry!r} was skipped."); continue
+            if protocol not in ("tcp","udp"):
+                warnings.append(f"{service_name}: port protocol {protocol!r} was skipped."); continue
+            label="WebUI" if not configs and protocol=="tcp" else f"Port {target} {protocol.upper()}"
+            description=f"Compose service {service_name} container port {target}/{protocol}"
+            if host_ip: description+=f"; Compose host IP {host_ip} is not carried over"
+            configs.append({"name":label,"target":target,"default":published,"type":"Port","mode":protocol,"description":description,"required":"false","mask":"false"})
+    return configs,warnings
+
+def compose_path_configs(service, service_name):
+    configs=[]; warnings=[]
+    for entry in service.get("volumes",[]) or []:
+        source=target=mode=""
+        if isinstance(entry,dict):
+            source=compose_value(entry.get("source")); target=compose_value(entry.get("target")); mode="ro" if entry.get("read_only") else compose_value(entry.get("read_only"))
+            if entry.get("type","volume") not in ("volume","bind"):
+                warnings.append(f"{service_name}: {entry.get('type')} mount at {target or 'unknown target'} is not represented and was skipped."); continue
+        else:
+            raw=compose_value(entry)
+            parts=raw.split(":")
+            if len(parts)==1:
+                target=parts[0] if parts[0].startswith("/") else ""
+                if not target: warnings.append(f"{service_name}: volume {raw!r} has no container target and was skipped."); continue
+            elif len(parts)==2: source,target=parts
+            elif len(parts)==3: source,target,mode=parts
+            else:
+                warnings.append(f"{service_name}: volume {raw!r} could not be interpreted; check Windows drive paths manually."); continue
+        if not target.startswith("/"):
+            warnings.append(f"{service_name}: volume target {target!r} is not an absolute container path and was skipped."); continue
+        label=Path(target.rstrip("/")).name or "Data"
+        description=f"Container path {target}"
+        if source: description+=f"; Compose source {source} is informational"
+        if mode in ("ro","read_only"):
+            description+="; Compose marks this mount read-only"
+            warnings.append(f"{service_name}: read-only mode for {target} is not enforced by a generated CA Path setting; review it before use.")
+        configs.append({"name":f"{label} Path","target":target,"default":"","type":"Path","mode":"","description":description,"required":"false","mask":"false"})
+    return configs,warnings
+
+def compose_environment_configs(service, service_name):
+    env=service.get("environment",{}) or {}
+    if isinstance(env,list):
+        values={}
+        for item in env:
+            key,sep,value=compose_value(item).partition("=")
+            values[key]=value if sep else ""
+        env=values
+    if not isinstance(env,dict): return [],[f"{service_name}: environment must be a mapping or list; it was skipped."]
+    configs=[]
+    secret_name=re.compile(r"(PASS(WORD)?|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL)",re.I)
+    for key,value in env.items():
+        key=str(key).strip()
+        if not key or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",key): continue
+        raw=compose_value(value); masked=bool(secret_name.search(key))
+        configs.append({"name":key,"target":key,"default":"" if masked else raw,"type":"Variable","mode":"","description":f"Environment variable from Compose service {service_name}","required":"false","mask":"true" if masked else "false"})
+    return configs,[]
+
+def compose_template(service_name, service, project_name):
+    if not isinstance(service,dict): raise ValueError(f"Compose service {service_name!r} must be a mapping.")
+    service_slug=compose_slug(service_name); labels=service.get("labels",{}) or {}
+    if isinstance(labels,list): labels=dict(item.split("=",1) if "=" in item else (item,"") for item in labels)
+    if not isinstance(labels,dict): labels={}
+    label={str(k):compose_value(v) for k,v in labels.items()}
+    title=label.get("ca.unraid.name",str(service.get("container_name") or service_name).replace("_"," ").title())
+    image=compose_value(service.get("image")); warnings=[]
+    if not image:
+        image=f"your-registry/{compose_slug(project_name)}-{service_slug}:latest"
+        warnings.append(f"{service_name}: no image was specified; replace the suggested image with a published image before submitting.")
+    if "${" in image: warnings.append(f"{service_name}: image contains Compose variable interpolation; resolve it to a public image before submission.")
+    configs=[]
+    ports,port_warnings=parse_compose_ports(service,service_name); configs.extend(ports); warnings.extend(port_warnings)
+    paths,path_warnings=compose_path_configs(service,service_name); configs.extend(paths); warnings.extend(path_warnings)
+    variables,env_warnings=compose_environment_configs(service,service_name); configs.extend(variables); warnings.extend(env_warnings)
+    if len(configs)>80: raise ValueError(f"Compose service {service_name!r} has more than 80 ports, volumes, and variables.")
+    mapped={"image","ports","volumes","environment","labels"}
+    unsupported=set(service)-mapped
+    for key in sorted(unsupported):
+        if key=="build": warnings.append(f"{service_name}: Compose build settings are not included; build and publish the image separately.")
+        elif key in ("privileged","cap_add","devices","security_opt") and service.get(key): warnings.append(f"{service_name}: {key} is intentionally omitted; review host-level access requirements manually.")
+        elif key=="container_name": warnings.append(f"{service_name}: Compose container_name is not preserved; Unraid assigns the installed container name.")
+        else: warnings.append(f"{service_name}: Compose setting '{key}' is not represented in CA template XML and was skipped.")
+    known_labels={"ca.unraid.name","ca.unraid.overview","ca.unraid.support","ca.unraid.project","org.opencontainers.image.source","org.opencontainers.image.description"}
+    custom_labels=set(label)-known_labels
+    if custom_labels: warnings.append(f"{service_name}: custom Compose labels not used by CA Workshop were skipped: {', '.join(sorted(custom_labels))}.")
+    overview=label.get("ca.unraid.overview") or label.get("org.opencontainers.image.description") or f"Docker Compose service {service_name} from {project_name}."
+    support=label.get("ca.unraid.support") or ""
+    project=label.get("org.opencontainers.image.source") or label.get("ca.unraid.project") or ""
+    webui=""
+    web_port=next((item for item in configs if item["type"]=="Port" and item["mode"]=="tcp"),None)
+    if web_port: webui=f"http://[IP]:[PORT:{web_port['target']}]"
+    def text(value): return xml_escape(compose_value(value))
+    xml=["<Container version=\"2\">",f"  <Name>{text(title)}</Name>",f"  <Repository>{text(image)}</Repository>","  <Network>bridge</Network>","  <MyIP></MyIP>","  <Shell>sh</Shell>","  <Privileged>false</Privileged>"]
+    if support: xml.append(f"  <Support>{text(support)}</Support>")
+    if project: xml.append(f"  <Project>{text(project)}</Project>")
+    xml.extend([f"  <Overview>{text(overview)}</Overview>",f"  <WebUI>{text(webui)}</WebUI>"])
+    for config in configs:
+        attrs={"Name":config["name"],"Target":config["target"],"Default":config["default"],"Mode":config["mode"],"Description":config["description"],"Type":config["type"],"Display":"always","Required":config["required"],"Mask":config["mask"]}
+        xml.append("  <Config "+" ".join(f"{key}={quoteattr(compose_value(value))}" for key,value in attrs.items())+"/>")
+    xml.append("</Container>")
+    return {"service":service_name,"name":title,"image":image,"path":f"templates/{service_slug}.xml","content":"\n".join(xml)+"\n","warnings":warnings}
+
+def convert_compose_document(content):
+    if not isinstance(content,str) or not content.strip(): raise ValueError("Choose a Compose file or paste its contents first.")
+    if len(content.encode("utf-8"))>1_000_000: raise ValueError("Compose files must be smaller than 1 MB.")
+    try: import yaml
+    except ImportError: raise ValueError("Compose import needs PyYAML. Install the project dependencies, then restart CA Workshop.") from None
+    try: document=yaml.safe_load(content)
+    except yaml.YAMLError as exc: raise ValueError(f"Could not read this Compose YAML: {exc}") from None
+    if not isinstance(document,dict) or not isinstance(document.get("services"),dict) or not document["services"]:
+        raise ValueError("The Compose file must contain at least one service.")
+    if len(document["services"])>30: raise ValueError("Import up to 30 services at a time.")
+    project=compose_value(document.get("name") or "compose-project")
+    templates=[]; seen=set()
+    for service_name,service in document["services"].items():
+        service_name=str(service_name); slug=compose_slug(service_name)
+        if slug in seen: raise ValueError(f"Multiple services create the same template filename: {slug}.xml")
+        seen.add(slug); templates.append(compose_template(service_name,service,project))
+    return templates
+
 def ca_catalog():
     status=inspect_repo(REPO)
     if not status.get("connected"):
@@ -459,6 +611,49 @@ class Handler(BaseHTTPRequestHandler):
         global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST
         try: data=self.body()
         except Exception:self.send_json({"error":"Invalid JSON request"},400); return
+        if self.path=="/api/compose/convert":
+            try: self.send_json({"templates":convert_compose_document(data.get("content"))})
+            except ValueError as exc:self.send_json({"error":str(exc)},400)
+            return
+        if self.path=="/api/compose/save":
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before saving generated templates."},400); return
+            templates=data.get("templates")
+            if not isinstance(templates,list) or not templates or len(templates)>30: self.send_json({"error":"Choose between 1 and 30 generated templates to save."},400); return
+            validated=[]; seen=set(); total=0
+            for item in templates:
+                if not isinstance(item,dict): self.send_json({"error":"Each generated template must include a file path and XML contents."},400); return
+                rel=str(item.get("path","")).strip(); content=item.get("content")
+                relative=Path(rel)
+                if not rel or relative.is_absolute() or relative.parts[0:1]!=("templates",) or ".git" in relative.parts or any(part in ("",".","..") for part in relative.parts) or relative.suffix.lower()!=".xml" or not isinstance(content,str):
+                    self.send_json({"error":"Template files must be XML files inside the repository's templates folder."},400); return
+                total+=len(content.encode("utf-8"))
+                if total>2_000_000: self.send_json({"error":"Generated template files must total less than 2 MB."},400); return
+                try:
+                    root=ET.fromstring(content)
+                    if root.tag!="Container" or not (root.findtext("Name") or "").strip() or not (root.findtext("Repository") or "").strip(): raise ValueError
+                except (ET.ParseError,ValueError): self.send_json({"error":f"{rel} must be valid Container XML with a name and image repository."},400); return
+                target=(REPO/relative).resolve()
+                if REPO not in target.parents: self.send_json({"error":"Generated files must stay inside the connected repository."},400); return
+                if target in seen: self.send_json({"error":f"The template path {rel} appears more than once."},400); return
+                seen.add(target); validated.append((rel,target,content))
+            conflicts=[rel for rel,target,_ in validated if target.exists()]
+            if conflicts and data.get("overwrite") is not True:
+                self.send_json({"error":"Some template files already exist.","conflicts":conflicts},409); return
+            staged=[]
+            try:
+                for rel,target,content in validated:
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    fd,temp_path=tempfile.mkstemp(prefix=".ca-workshop-",suffix=".tmp",dir=target.parent)
+                    with os.fdopen(fd,"w",encoding="utf-8") as stream: stream.write(content)
+                    staged.append((rel,target,Path(temp_path)))
+                for _,target,temp_path in staged: os.replace(temp_path,target)
+            except OSError as exc:
+                for _,_,temp_path in staged:
+                    try: temp_path.unlink(missing_ok=True)
+                    except OSError: pass
+                self.send_json({"error":f"Could not save the generated templates: {exc}"},400); return
+            record_activity("Compose templates generated",f"{len(validated)} template(s) saved to the repository")
+            self.send_json({"ok":True,"files":[rel for rel,_,_ in validated]}); return
         if self.path=="/api/package/check":
             start_package_check(download_if_needed=False); self.send_json(package_status_payload(),202); return
         if self.path=="/api/package/download":
