@@ -13,6 +13,7 @@ The app is intended to run on the same computer as the Docker engine used for te
 - Browse, create, edit, and delete repository files in the browser. Edits are saved to the local folder; use Git to review, commit, and push them.
 - Use **Template editor** to change template metadata and Docker configuration fields in a form, inspect the generated XML preview, and save back to the repository.
 - Use **CA profile editor** to create or update the root `ca_profile.xml` with maintainer icon, profile text, donation details, website, and support forum fields. Add or remove XML fields and preview the result; existing nested XML elements are retained.
+- Use **Icon tools** to generate a Font Awesome PNG for a selected Docker template, fill convention-named missing icons from a placeholder image, compare PNG pixels to find placeholder copies, and replace exact matches with another icon.
 - Start a new template without Compose by choosing **Start from dummy XML** in the visual editor. It uses a bundled, editable starter based on [nwithan8's dummy template](https://github.com/nwithan8/unraid_templates/blob/main/dummy.xml.example) and creates a new file under `templates/`.
 - Create a public repository from Unraid's [`unraid-community-apps-starter`](https://github.com/unraid/unraid-community-apps-starter) template with a GitHub token, clone it locally, and fill in the starter metadata.
 - Import a Docker Compose YAML file, map each service into the same bundled dummy XML starter used by the visual editor, then continue editing each result there before saving it into the repository.
@@ -75,6 +76,10 @@ To stop the app, interrupt the running process in the terminal where it was star
 
 1. Open **Repository** and connect an existing local clone, or create a new public repository from the starter template.
 2. Once the profile, license, and public GitHub checks pass, use the guided setup to create an example app template and upload its PNG icon. CA Workshop saves the template under `templates/`, updates `ca_profile.xml`, and replaces the starter README when applicable. Changes are local until you commit and push them with Git.
+
+### Template icons
+
+The **Icon tools** page adapts the icon workflows from [font_awesome_icon.sh](https://github.com/nwithan8/unraid_templates/blob/main/scripts/font_awesome_icon.sh), [populate_missing_icons.sh](https://github.com/nwithan8/unraid_templates/blob/main/scripts/populate_missing_icons.sh), [replace_all_placeholder_icons.sh](https://github.com/nwithan8/unraid_templates/blob/main/scripts/replace_all_placeholder_icons.sh), and [check_placeholder_icons.sh](https://github.com/nwithan8/unraid_templates/blob/main/scripts/check_placeholder_icons.sh). Font Awesome SVGs are rendered to PNG by the browser; missing icon files are copied with the app’s cross-platform file APIs; placeholder checks compare decoded pixels in the browser. The workflow does not call Bash, ImageMagick, or OS-specific `stat` commands.
 3. Run the local preflight and resolve issues it finds.
 4. Use **Compose import** to turn Docker Compose services into CA template XML, review the warnings and generated files, then save them to the repository.
 5. Use **Browse CA** or **Package sandbox** to inspect apps and exercise supported Docker templates locally.

@@ -312,6 +312,35 @@ def repo_files():
     ignored={".git", ".github", "node_modules", "__pycache__"}
     return sorted((str(p.relative_to(REPO)) for p in REPO.rglob("*") if p.is_file() and not ignored.intersection(p.relative_to(REPO).parts)))[:1000]
 
+def github_raw_base(repo):
+    remote=subprocess.run(["git","-C",str(repo),"remote","get-url","origin"],capture_output=True,text=True,timeout=5,check=True).stdout.strip()
+    if remote.startswith("git@github.com:"): github_path=remote[len("git@github.com:"):]
+    else:
+        parsed=urlparse(remote)
+        if parsed.scheme not in ("https","ssh","git") or parsed.hostname!="github.com": raise ValueError("Add a GitHub origin remote to generate a public icon URL.")
+        github_path=parsed.path.lstrip("/")
+    github_path=github_path.removesuffix(".git").strip("/")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",github_path): raise ValueError("Could not identify the GitHub repository from its origin.")
+    branch=subprocess.run(["git","-C",str(repo),"branch","--show-current"],capture_output=True,text=True,timeout=5,check=True).stdout.strip()
+    if not branch or not re.fullmatch(r"[A-Za-z0-9._/-]+",branch): raise ValueError("Check out a named Git branch before generating template icons.")
+    return f"https://raw.githubusercontent.com/{github_path}/{branch}"
+
+def icon_tool_data(repo):
+    image_dir=repo/"images"
+    image_files=sorted(str(path.relative_to(repo)).replace(os.sep,"/") for path in image_dir.glob("*") if path.is_file() and path.suffix.lower()==".png" and path.stat().st_size<=2_000_000 and path.read_bytes()[:8]==b"\x89PNG\r\n\x1a\n") if image_dir.is_dir() else []
+    templates=[]
+    template_dir=repo/"templates"
+    if template_dir.is_dir():
+        for path in sorted(template_dir.rglob("*.xml")):
+            try:
+                root=ET.parse(path).getroot()
+                if root.tag!="Container": continue
+                icon_slug=re.sub(r"_","-",path.stem).lower()
+                icon_file=f"images/{icon_slug}-icon.png"
+                templates.append({"file":str(path.relative_to(repo)).replace(os.sep,"/"),"name":(root.findtext("Name") or path.stem).strip(),"icon_file":icon_file,"has_icon":(repo/icon_file).is_file(),"icon_url":(root.findtext("Icon") or "").strip()})
+            except (ET.ParseError,OSError): continue
+    return {"connected":True,"templates":templates,"images":image_files,"placeholder":"images/placeholder-icon.png","has_placeholder":(repo/"images"/"placeholder-icon.png").is_file()}
+
 def docker(*args, timeout=20):
     try:
         return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
@@ -614,6 +643,35 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(result); return
         if self.path == "/api/history": self.send_json({"events": HISTORY[-50:]}); return
         if self.path == "/api/unraid/status": self.send_json(unraid_status()); return
+        if self.path == "/api/repo/icon-tools":
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before using icon tools."},400); return
+            self.send_json(icon_tool_data(REPO)); return
+        if self.path.startswith("/api/repo/icon-image?"):
+            query=parse_qs(urlparse(self.path).query); rel=query.get("path",[""])[0]
+            if not REPO or not rel or Path(rel).is_absolute() or not Path(rel).parts or Path(rel).parts[0]!="images" or Path(rel).suffix.lower()!=".png" or any(part in ("",".","..") for part in Path(rel).parts): self.send_json({"error":"Choose a PNG image from the repository images folder."},400); return
+            target=(REPO/rel).resolve()
+            if REPO not in target.parents or not target.is_file() or target.stat().st_size>2_000_000: self.send_json({"error":"Image unavailable or larger than 2 MB."},400); return
+            data=target.read_bytes()
+            if not data.startswith(b"\x89PNG\r\n\x1a\n"): self.send_json({"error":"The selected file is not a PNG image."},400); return
+            self.send_response(200); self.send_header("Content-Type","image/png"); self.send_header("Content-Length",str(len(data))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data); return
+        if self.path.startswith("/api/icons/font-awesome?"):
+            query=parse_qs(urlparse(self.path).query); name=query.get("name",[""])[0].strip().lower(); style=query.get("style",["solid"])[0]
+            if not re.fullmatch(r"[a-z0-9-]{1,80}",name) or style not in ("solid","regular","brands"): self.send_json({"error":"Enter a Font Awesome icon name and choose solid, regular, or brands."},400); return
+            request=urllib.request.Request(f"https://site-assets.fontawesome.com/releases/v6.7.2/svgs/{style}/{name}.svg",headers={"User-Agent":"CA-Workshop/1.0"})
+            try:
+                with urllib.request.urlopen(request,timeout=15) as response: svg=response.read(500_001).decode("utf-8")
+                if len(svg)>500_000 or re.search(r"<!DOCTYPE|<!ENTITY",svg,re.I): raise ValueError("The icon response was not a safe SVG file.")
+                root=ET.fromstring(svg)
+                if root.tag.rsplit("}",1)[-1].lower()!="svg": raise ValueError("Font Awesome did not return an SVG icon.")
+                for node in root.iter():
+                    if node.tag.rsplit("}",1)[-1].lower() in ("script","foreignobject","iframe","object","embed"): raise ValueError("The downloaded SVG contains unsafe content.")
+                    for key,value in node.attrib.items():
+                        attr=key.rsplit("}",1)[-1].lower()
+                        if attr.startswith("on") or (attr in ("href","src") and value.strip() and not value.strip().startswith("#")): raise ValueError("The downloaded SVG contains external content.")
+                self.send_json({"svg":svg,"name":name,"style":style})
+            except urllib.error.HTTPError:self.send_json({"error":"That icon was not found. Check the name and style."},404)
+            except (OSError,UnicodeError,ET.ParseError,ValueError) as exc:self.send_json({"error":str(exc) or "Could not download the Font Awesome icon."},502)
+            return
         if self.path.startswith("/api/ca/browse"):
             try:
                 query=parse_qs(urlparse(self.path).query)
@@ -726,6 +784,77 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error":f"Could not save the generated templates: {exc}"},400); return
             record_activity("Compose templates generated",f"{len(validated)} template(s) saved to the repository")
             self.send_json({"ok":True,"files":[rel for rel,_,_ in validated]}); return
+        if self.path in ("/api/repo/icons/placeholder","/api/repo/icons/font-awesome"):
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before saving icons."},400); return
+            encoded=str(data.get("data",""));
+            if len(encoded)>3_000_000: self.send_json({"error":"Choose an icon smaller than 2 MB."},400); return
+            try: image=base64.b64decode(encoded,validate=True)
+            except (ValueError,binascii.Error): self.send_json({"error":"The generated PNG could not be read."},400); return
+            if len(image)>2_000_000 or not image.startswith(b"\x89PNG\r\n\x1a\n"): self.send_json({"error":"The icon must be a valid PNG smaller than 2 MB."},400); return
+            try:
+                image_dir=REPO/"images"; image_dir.mkdir(parents=True,exist_ok=True)
+                if self.path=="/api/repo/icons/placeholder":
+                    target=(image_dir/"placeholder-icon.png").resolve()
+                    if REPO not in target.parents: raise ValueError("Invalid placeholder icon path.")
+                    target.write_bytes(image); record_activity("Placeholder icon saved","images/placeholder-icon.png")
+                    self.send_json({"ok":True,"path":"images/placeholder-icon.png"}); return
+                rel=str(data.get("template","")); relative=Path(rel)
+                if not rel or relative.is_absolute() or relative.parts[:1]!=("templates",) or relative.suffix.lower()!=".xml" or any(part in ("",".","..") for part in relative.parts): raise ValueError("Choose a template XML file under templates/.")
+                template=(REPO/relative).resolve()
+                if REPO not in template.parents or not template.is_file() or template.stat().st_size>1_000_000: raise ValueError("The selected template file is unavailable.")
+                parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)); root=ET.parse(template,parser=parser).getroot()
+                if root.tag!="Container": raise ValueError("Font Awesome icons can only be added to Docker template XML files.")
+                slug=re.sub(r"[^A-Za-z0-9_.-]+","-",template.stem).strip("-.").replace("_","-").lower()[:80]
+                if not slug: raise ValueError("The selected template needs a usable filename.")
+                icon_rel=f"images/{slug}-icon.png"; icon_target=(REPO/icon_rel).resolve()
+                if REPO not in icon_target.parents: raise ValueError("Invalid icon output path.")
+                raw_base=github_raw_base(REPO); icon_url=f"{raw_base}/{icon_rel}"
+                icon_node=root.find("Icon")
+                if icon_node is None: icon_node=ET.SubElement(root,"Icon")
+                icon_node.text=icon_url
+                template_text="<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+ET.tostring(root,encoding="unicode")+"\n"
+                for target,content in ((icon_target,image),(template,template_text)):
+                    fd,temp_name=tempfile.mkstemp(prefix=".ca-workshop-icon-",suffix=".tmp",dir=target.parent)
+                    with os.fdopen(fd,"wb" if isinstance(content,bytes) else "w",**({} if isinstance(content,bytes) else {"encoding":"utf-8"})) as stream: stream.write(content)
+                    os.replace(temp_name,target)
+                record_activity("Font Awesome icon added",f"{icon_rel} → {rel}")
+                self.send_json({"ok":True,"icon":icon_rel,"url":icon_url,"template":rel})
+            except (ValueError,ET.ParseError,OSError,subprocess.SubprocessError) as exc:self.send_json({"error":str(exc) or "Could not save the generated icon."},400)
+            return
+        if self.path=="/api/repo/icons/fill-missing":
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before creating icons."},400); return
+            placeholder=REPO/"images"/"placeholder-icon.png"
+            if not placeholder.is_file() or placeholder.stat().st_size>2_000_000: self.send_json({"error":"Upload a placeholder PNG to images/placeholder-icon.png first."},400); return
+            placeholder_bytes=placeholder.read_bytes()
+            if not placeholder_bytes.startswith(b"\x89PNG\r\n\x1a\n"): self.send_json({"error":"images/placeholder-icon.png is not a valid PNG."},400); return
+            created=[]; image_dir=placeholder.parent; image_dir.mkdir(parents=True,exist_ok=True)
+            for template in (REPO/"templates").rglob("*.xml") if (REPO/"templates").is_dir() else []:
+                slug=re.sub(r"_","-",template.stem).lower(); target=image_dir/f"{slug}-icon.png"
+                if not target.exists(): shutil.copyfile(placeholder,target); created.append(str(target.relative_to(REPO)).replace(os.sep,"/"))
+            record_activity("Missing template icons populated",f"Created {len(created)} placeholder icon(s)")
+            self.send_json({"ok":True,"created":created}); return
+        if self.path=="/api/repo/icons/replace-placeholders":
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before replacing icons."},400); return
+            source_rel=str(data.get("source","")); targets=data.get("targets",[])
+            if not isinstance(targets,list) or len(targets)>500: self.send_json({"error":"Choose a valid set of placeholder icons to replace."},400); return
+            source_rel_path=Path(source_rel)
+            if source_rel_path.is_absolute() or source_rel_path.parts[:1]!=("images",) or source_rel_path.suffix.lower()!=".png" or any(part in ("",".","..") for part in source_rel_path.parts): self.send_json({"error":"Choose a PNG source from the images folder."},400); return
+            source=(REPO/source_rel_path).resolve()
+            if REPO not in source.parents or not source.is_file() or source.stat().st_size>2_000_000: self.send_json({"error":"The replacement icon is unavailable or too large."},400); return
+            source_bytes=source.read_bytes()
+            if not source_bytes.startswith(b"\x89PNG\r\n\x1a\n"): self.send_json({"error":"The replacement file is not a valid PNG."},400); return
+            replaced=[]
+            try:
+                for rel in targets:
+                    relative=Path(str(rel))
+                    if relative.is_absolute() or relative.parts[:1]!=("images",) or relative.suffix.lower()!=".png" or relative.name=="placeholder-icon.png" or any(part in ("",".","..") for part in relative.parts): raise ValueError("Only PNG icon files under images/ can be replaced.")
+                    target=(REPO/relative).resolve()
+                    if REPO not in target.parents or not target.is_file() or target.stat().st_size>2_000_000: raise ValueError(f"{rel} is unavailable or too large.")
+                    shutil.copyfile(source,target); replaced.append(str(relative).replace(os.sep,"/"))
+                record_activity("Placeholder icons replaced",f"Replaced {len(replaced)} icon(s) with {source_rel}")
+                self.send_json({"ok":True,"replaced":replaced})
+            except (ValueError,OSError) as exc:self.send_json({"error":str(exc)},400)
+            return
         if self.path=="/api/package/check":
             start_package_check(download_if_needed=False); self.send_json(package_status_payload(),202); return
         if self.path=="/api/package/download":
