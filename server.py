@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, urlencode
 from xml.sax.saxutils import escape as xml_escape, quoteattr
+from automation.template_validation.validate_app_config import validate_template_content
 
 ROOT = Path(__file__).resolve().parent
 CA_ORIGIN = "https://ca.unraid.net"
@@ -416,7 +417,8 @@ def inspect_repo(repo):
     for file in templates:
         result={"file":str(file.relative_to(repo)),"ok":False,"kind":"unknown","errors":[],"name":"", "repository":"", "plugin_url":""}
         try:
-            root=ET.parse(file).getroot(); result["kind"]="docker" if root.tag=="Container" else "plugin" if root.tag=="Plugin" else root.tag
+            content=file.read_text(encoding="utf-8",errors="replace")
+            root=ET.fromstring(content); result["kind"]="docker" if root.tag=="Container" else "plugin" if root.tag=="Plugin" else root.tag
             result["name"]=(root.findtext("Name") or "").strip(); result["repository"]=(root.findtext("Repository") or "").strip(); result["plugin_url"]=(root.findtext("PluginURL") or "").strip()
             result["overview"]=(root.findtext("Overview") or "").strip()
             result["configs"]=[]
@@ -428,6 +430,7 @@ def inspect_repo(repo):
             if root.tag=="Container" and not result["repository"]: result["errors"].append("Missing <Repository>")
             if root.tag=="Plugin" and not result["plugin_url"]: result["errors"].append("Missing <PluginURL>")
             if root.tag not in ("Container","Plugin"): result["errors"].append("Root element must be <Container> or <Plugin>")
+            if root.tag=="Container": result["errors"].extend(validate_template_content(content))
             starter_text=" ".join(x.text or "" for x in root.iter())
             if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app|AppTitle|author/container|author/app|your-registry|dummy-icon|dummy\.xml|dummy_screenshot|keywords related to the app|default_value|appdata/dummy|A description of the app|true\|false|2025-01-01",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
             result["ok"]=not result["errors"]
