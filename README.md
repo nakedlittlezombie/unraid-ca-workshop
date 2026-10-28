@@ -72,7 +72,7 @@ To stop the app, interrupt the running process in the terminal where it was star
 ## First use
 
 1. Open **Repository** and connect an existing local clone, or create a new public repository from the starter template.
-2. Review the starter files and edit the repository metadata and templates as needed. Changes are local until you commit and push them with Git.
+2. Once the profile, license, and public GitHub checks pass, use the guided setup to create an example app template and upload its PNG icon. CA Workshop saves the template under `templates/`, updates `ca_profile.xml`, and replaces the starter README when applicable. Changes are local until you commit and push them with Git.
 3. Run the local preflight and resolve issues it finds.
 4. Use **Compose import** to turn Docker Compose services into CA template XML, review the warnings and generated files, then save them to the repository.
 5. Use **Browse CA** or **Package sandbox** to inspect apps and exercise supported Docker templates locally.
@@ -98,6 +98,7 @@ The Unraid connection can update or remove existing containers when you grant th
 - **CA portal sign-in does not work in the embedded view:** Choose **Open in new tab** and sign in there.
 - **Unraid connection fails:** Confirm the host address is reachable from this computer, restart authorization from the app, and grant the requested scopes on the Unraid server.
 - **Repository files do not appear:** Connect the local clone's root folder and make sure the repository files are present. Browser editor changes are saved to that local folder, not pushed to GitHub automatically.
+- **Guided template setup is not available:** The repository needs a valid root profile and license and must be public and active on GitHub first. After saving a template, CA Workshop asks whether to run preflight.
 - **Package sandbox is empty:** Wait for the first download to finish. If it fails, check your internet connection and choose **Check for updates** to retry.
 
 ## Project layout

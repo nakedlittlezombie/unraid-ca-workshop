@@ -2,6 +2,8 @@
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import base64
+import binascii
 import json
 import hashlib
 import hmac
@@ -752,6 +754,108 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=="/api/repo/validate":
             result=inspect_repo(REPO); record_activity("Local preflight", f"{sum(c['ok'] for c in result.get('checks',[]) if not c.get('manual'))} of {sum(not c.get('manual') for c in result.get('checks',[]))} checks passed; {sum(t['ok'] for t in result.get('templates',[]))} of {len(result.get('templates',[]))} templates valid")
             self.send_json(result); return
+        if self.path=="/api/repo/populate":
+            if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before creating its example files."},400); return
+            github_check=check_public_github_repo(REPO)
+            if github_check.get("manual") or not github_check.get("ok"): self.send_json({"error":"The repository must be verified as public and active before creating submission files."},400); return
+            fields={key:str(data.get(key," ")).strip() for key in ("name","image","overview","profile","project","support","container_port","host_port")}
+            if any(not fields[key] or len(fields[key])>limit for key,limit in (("name",100),("image",300),("overview",2000),("profile",4000),("container_port",5),("host_port",5))): self.send_json({"error":"Complete the app name, image, descriptions, and port values."},400); return
+            if not re.fullmatch(r"[0-9]{1,5}",fields["container_port"]) or not re.fullmatch(r"[0-9]{1,5}",fields["host_port"]) or not 1<=int(fields["container_port"])<=65535 or not 1<=int(fields["host_port"])<=65535: self.send_json({"error":"Ports must be between 1 and 65535."},400); return
+            def checked_url(value,label,required=False):
+                if not value and not required: return ""
+                parsed=urlparse(value)
+                if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or len(value)>1000: raise ValueError(f"Enter a valid HTTPS {label} link.")
+                return value
+            try:
+                fields["project"]=checked_url(fields["project"],"project",True)
+                fields["support"]=checked_url(fields["support"],"support")
+                remote=subprocess.run(["git","-C",str(REPO),"remote","get-url","origin"],capture_output=True,text=True,timeout=5,check=True).stdout.strip()
+                if remote.startswith("git@github.com:"): github_path=remote[len("git@github.com:"):]
+                else:
+                    parsed=urlparse(remote)
+                    if parsed.scheme not in ("https","ssh","git") or parsed.hostname!="github.com": raise ValueError("The connected repository needs a GitHub origin to create correct raw file links.")
+                    github_path=parsed.path.lstrip("/")
+                github_path=github_path.removesuffix(".git").strip("/")
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",github_path): raise ValueError("Could not identify the GitHub repository from its origin.")
+                branch=subprocess.run(["git","-C",str(REPO),"branch","--show-current"],capture_output=True,text=True,timeout=5,check=True).stdout.strip()
+                if not branch or not re.fullmatch(r"[A-Za-z0-9._/-]+",branch): raise ValueError("Check out a named Git branch before creating templates.")
+                icon=data.get("icon",{}); mime=str(icon.get("type","")); encoded=str(icon.get("data",""))
+                if mime!="image/png" or not encoded or len(encoded)>3_000_000: raise ValueError("Upload an app icon as a PNG under 2 MB.")
+                try: icon_bytes=base64.b64decode(encoded,validate=True)
+                except (ValueError,binascii.Error): raise ValueError("The selected app icon could not be read.") from None
+                if not icon_bytes.startswith(b"\x89PNG\r\n\x1a\n") or len(icon_bytes)>2_000_000: raise ValueError("The icon must be a valid PNG under 2 MB.")
+                profile_file=REPO/"ca_profile.xml"
+                if not profile_file.is_file(): raise ValueError("ca_profile.xml is missing from the repository root.")
+                profile_parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
+                profile_root=ET.parse(profile_file,parser=profile_parser).getroot()
+                profile_node=profile_root.find("Profile")
+                if profile_node is None: profile_node=ET.SubElement(profile_root,"Profile")
+                profile_node.text=fields["profile"]
+                icon_node=profile_root.find("Icon")
+                if icon_node is None: icon_node=ET.SubElement(profile_root,"Icon")
+                icon_node.text=f"https://raw.githubusercontent.com/{github_path}/{branch}/icon.png"
+                web_node=profile_root.find("WebPage")
+                if web_node is None: web_node=ET.SubElement(profile_root,"WebPage")
+                web_node.text=fields["project"]
+                forum_node=profile_root.find("Forum")
+                if fields["support"]:
+                    if forum_node is None: forum_node=ET.SubElement(profile_root,"Forum")
+                    forum_node.text=fields["support"]
+                elif forum_node is not None: profile_root.remove(forum_node)
+                for optional_node in list(profile_root):
+                    if isinstance(optional_node.tag,str) and re.search(r"YOUR_[A-Z0-9_]+|Describe what users|URL to any photos|URL to any video",optional_node.text or "",re.I):
+                        profile_root.remove(optional_node)
+                safe_name=re.sub(r"[^A-Za-z0-9_.-]+","-",fields["name"]).strip("-.")[:70] or "example-app"
+                template_path=REPO/"templates"/f"{safe_name.lower()}.xml"
+                starter_template=REPO/"templates"/"example-app.xml"
+                replace_starter_template=False
+                if starter_template.is_file() and starter_template.stat().st_size<100_000:
+                    starter_text=starter_template.read_text(encoding="utf-8",errors="replace")
+                    if "container_name" in starter_text or "YOUR_GITHUB_USERNAME" in starter_text or "Explain what this container does" in starter_text:
+                        template_path=starter_template; replace_starter_template=True
+                if template_path.exists() and not replace_starter_template: raise ValueError(f"{template_path.relative_to(REPO)} already exists. Choose a different app name or edit that template.")
+                raw=f"https://raw.githubusercontent.com/{github_path}/{branch}"
+                icon_url=f"{raw}/icon.png"
+                xml=("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                     f"<Container version=\"2\">\n  <Name>{xml_escape(fields['name'])}</Name>\n  <Repository>{xml_escape(fields['image'])}</Repository>\n  <Network>bridge</Network>\n  <Shell>bash</Shell>\n  <Privileged>false</Privileged>\n  <Icon>{xml_escape(icon_url)}</Icon>\n  <WebUI>http://[IP]:[PORT:{fields['container_port']}]</WebUI>\n  <Overview>{xml_escape(fields['overview'])}</Overview>\n  <Project>{xml_escape(fields['project'])}</Project>\n")
+                if fields["support"]: xml+=f"  <Support>{xml_escape(fields['support'])}</Support>\n"
+                xml+=(f"  <TemplateURL>{xml_escape(raw+'/templates/'+template_path.name)}</TemplateURL>\n  <Category>Tools:Utilities</Category>\n"
+                      f"  <Config Name=\"WebUI\" Target=\"{fields['container_port']}\" Default=\"{fields['host_port']}\" Mode=\"tcp\" Description=\"Web interface port\" Type=\"Port\" Required=\"true\"/>\n"
+                      "  <Config Name=\"Appdata\" Target=\"/config\" Default=\"/mnt/user/appdata/example-app\" Mode=\"rw\" Description=\"Persistent application data\" Type=\"Path\" Required=\"true\"/>\n</Container>\n")
+                profile_content=ET.tostring(profile_root,encoding="unicode",xml_declaration=True)
+                template_path.parent.mkdir(parents=True,exist_ok=True)
+                targets=[(profile_file,profile_content),(template_path,xml),(REPO/"icon.png",icon_bytes)]
+                readme=REPO/"README.md"
+                if not readme.exists() or "Community Apps Starter Template" in readme.read_text(encoding="utf-8",errors="replace"):
+                    repo_title=github_path.split("/")[-1]
+                    readme_text=f"# {repo_title}\n\n{fields['profile']}\n\n## Apps\n\n### {fields['name']}\n\n{fields['overview']}\n\n- Docker image: `{fields['image']}`\n- Template: [`{template_path.relative_to(REPO)}`]({template_path.relative_to(REPO)})\n- Project: {fields['project']}\n"+(f"- Support: {fields['support']}\n" if fields["support"] else "")
+                    targets.append((readme,readme_text))
+                staged=[]
+                try:
+                    for target,content in targets:
+                        fd,temp_path=tempfile.mkstemp(prefix=".ca-workshop-",suffix=".tmp",dir=target.parent)
+                        mode="wb" if isinstance(content,bytes) else "w"
+                        with os.fdopen(fd,mode,**({} if mode=="wb" else {"encoding":"utf-8"})) as stream: stream.write(content)
+                        staged.append((target,Path(temp_path)))
+                    for target,temp_path in staged: os.replace(temp_path,target)
+                except OSError:
+                    for _,temp_path in staged: temp_path.unlink(missing_ok=True)
+                    raise
+                removed_files=[]
+                if data.get("remove_plugin_example") is True:
+                    plugin_example=REPO/"plugins"/"example-plugin.xml"
+                    if plugin_example.is_file() and plugin_example.stat().st_size<100_000:
+                        text=plugin_example.read_text(encoding="utf-8",errors="replace")
+                        if "Example Plugin" in text and "YOUR_GITHUB_USERNAME" in text:
+                            plugin_example.unlink(); removed_files.append("plugins/example-plugin.xml")
+                    starter_icon=REPO/"icon.svg"
+                    if starter_icon.is_file() and starter_icon.stat().st_size<100_000 and "YOUR_GITHUB_USERNAME" in starter_icon.read_text(encoding="utf-8",errors="replace"):
+                        starter_icon.unlink(); removed_files.append("icon.svg")
+                record_activity("Repository example populated",f"{template_path.relative_to(REPO)} and icon.png")
+                result=inspect_repo(REPO); result["created_files"]=[str(target.relative_to(REPO)) for target,_ in targets]; result["removed_files"]=removed_files
+                self.send_json(result)
+            except (ValueError,ET.ParseError,OSError,subprocess.SubprocessError) as exc: self.send_json({"error":str(exc) or "Could not create example repository files."},400)
+            return
         if self.path=="/api/repo/file/save":
             rel=str(data.get("path", "")).strip(); content=data.get("content")
             if not REPO or not REPO.is_dir(): self.send_json({"error":"Connect a repository before editing files."},400); return
