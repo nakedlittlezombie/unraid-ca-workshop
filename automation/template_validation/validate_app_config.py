@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -57,6 +59,39 @@ def validate_template_content(content: str) -> list[str]:
             errors.append(f"Config Target '{target}' is all caps, so its Type should be Variable.")
 
     return errors
+
+
+def validate_template_xsd(schema_path: str | Path, template_path: str | Path) -> dict[str, object]:
+    """Validate a template with xmllint, the engine used by idddev/xml-xsd-validator.
+
+    The upstream Node wrapper requires xmllint and constructs a shell command from
+    file paths. Invoke the same engine with an argument list so paths containing
+    spaces are safe and the call works on Windows, macOS, and Linux.
+    """
+    executable = shutil.which("xmllint")
+    if not executable:
+        return {"status": "skipped", "message": "xmllint is not installed; the XSD check was skipped."}
+    try:
+        result = subprocess.run(
+            [executable, "--nonet", "--noout", "--schema", str(schema_path), str(template_path)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "skipped", "message": "XSD validation timed out."}
+    except OSError as exc:
+        return {"status": "skipped", "message": f"Could not start xmllint: {exc}"}
+
+    if result.returncode == 0:
+        return {"status": "valid", "message": "Valid against template_schema.xsd."}
+    output = (result.stderr or result.stdout).strip()
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    messages = [line for line in lines if "fails to validate" not in line.lower()]
+    if not messages:
+        messages = ["Template does not match template_schema.xsd."]
+    return {"status": "invalid", "message": " ".join(messages[:4])}
 
 
 def validate_template_file(template_file_path: str | Path) -> bool:

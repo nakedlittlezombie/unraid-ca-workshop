@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, urlencode
 from xml.sax.saxutils import escape as xml_escape, quoteattr
-from automation.template_validation.validate_app_config import validate_template_content
+from automation.template_validation.validate_app_config import validate_template_content, validate_template_xsd
 
 ROOT = Path(__file__).resolve().parent
 CA_ORIGIN = "https://ca.unraid.net"
@@ -393,7 +393,8 @@ def inspect_repo(repo):
         return {"connected": False, "error": "Choose an existing repository folder."}
     profile = repo / "ca_profile.xml"
     license_file = next((repo / n for n in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING") if (repo / n).is_file()), None)
-    templates = [p for p in xml_files(repo) if p.name != "ca_profile.xml" and ("templates" in p.parts or "plugins" in p.parts)]
+    templates = [p for p in xml_files(repo) if p.name not in ("ca_profile.xml","template_schema.xsd") and ("templates" in p.parts or "plugins" in p.parts)]
+    template_schema=repo/"templates"/"template_schema.xsd"
     checks = [
         {"id":"profile-file", "label":"ca_profile.xml at repository root", "ok":profile.is_file(), "detail":"Required repository metadata file"},
         {"id":"profile-content", "label":"Non-empty <Profile> section", "ok":False, "detail":"Repository overview text"},
@@ -430,7 +431,12 @@ def inspect_repo(repo):
             if root.tag=="Container" and not result["repository"]: result["errors"].append("Missing <Repository>")
             if root.tag=="Plugin" and not result["plugin_url"]: result["errors"].append("Missing <PluginURL>")
             if root.tag not in ("Container","Plugin"): result["errors"].append("Root element must be <Container> or <Plugin>")
-            if root.tag=="Container": result["errors"].extend(validate_template_content(content))
+            if root.tag=="Container":
+                result["errors"].extend(validate_template_content(content))
+                if template_schema.is_file():
+                    schema_result=validate_template_xsd(template_schema,file); result["schema_validation"]=schema_result
+                    if schema_result["status"]=="invalid": result["errors"].append(f"XSD validation: {schema_result['message']}")
+                else: result["schema_validation"]={"status":"skipped","message":"No templates/template_schema.xsd was found."}
             starter_text=" ".join(x.text or "" for x in root.iter())
             if re.search(r"YOUR_[A-Z0-9_]+|Explain what|container_name|Example Plugin|example-app|AppTitle|author/container|author/app|your-registry|dummy-icon|dummy\.xml|dummy_screenshot|keywords related to the app|default_value|appdata/dummy|A description of the app|true\|false|2025-01-01",starter_text,re.I): result["errors"].append("Replace starter-template placeholders before using this template")
             result["ok"]=not result["errors"]

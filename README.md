@@ -57,6 +57,7 @@ The server's authorization screen can use its configured sign-in, including Unra
 - Git for working with local repositories and GitHub clones.
 - A GitHub account and personal access token only if you use the repository bootstrap feature.
 - An Unraid server only if you use server inspection and container controls.
+- `xmllint` (optional; enables XSD checks when the connected repository includes `templates/template_schema.xsd`).
 - An internet connection on first use and when checking for package updates.
 - PyYAML, installed from `requirements.txt` for Compose YAML parsing.
 
@@ -90,7 +91,7 @@ The **Icon tools** page adapts the icon workflows from [font_awesome_icon.sh](ht
 
 ### Template validation
 
-Repository preflight runs the checks from the adapted [`validate_app_config.py`](automation/template_validation/validate_app_config.py), based on [nwithan8’s upstream validator](https://github.com/nwithan8/unraid_templates/blob/main/automation/template_validation/validate_app_config.py), for every Docker template. It checks the XML declaration, WebUI and Network format, a matching Port Config for the WebUI port (except host networking), and all-caps Config targets that should be Variables. The validator also runs on its own with `python automation/template_validation/validate_app_config.py templates/your-template.xml`.
+Repository preflight runs the checks from the adapted [`validate_app_config.py`](automation/template_validation/validate_app_config.py), based on [nwithan8’s upstream validator](https://github.com/nwithan8/unraid_templates/blob/main/automation/template_validation/validate_app_config.py), for every Docker template. It checks the XML declaration, WebUI and Network format, a matching Port Config for the WebUI port (except host networking), and all-caps Config targets that should be Variables. If the repository contains `templates/template_schema.xsd`, preflight also validates templates against it using [`idddev/xml-xsd-validator`](https://github.com/idddev/xml-xsd-validator/tree/d676254dbfe82b80eab6548ab2e420d8f695652e)’s `xmllint` engine. XSD checks show as skipped when the schema or `xmllint` is unavailable. The app invokes `xmllint` with separate arguments rather than using the upstream Node wrapper’s shell command, so repository paths with spaces are handled safely. The app-specific validator also runs on its own with `python automation/template_validation/validate_app_config.py templates/your-template.xml`.
 
 ## Local data and credentials
 
