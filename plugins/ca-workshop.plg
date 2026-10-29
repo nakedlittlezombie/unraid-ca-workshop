@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29v" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29v. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29w" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29w. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -1441,7 +1441,7 @@ class Handler(BaseHTTPRequestHandler):
             record_activity("Repository connected", path.name)
             self.send_json(inspect_repo(REPO)); return
         if self.path=="/api/repo/bootstrap":
-            token=str(data.get("token", "")).strip() or GITHUB_TOKEN; repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "~/dev")).strip()
+            token=str(data.get("token", "")).strip() or GITHUB_TOKEN; repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "/mnt/cache" if running_on_unraid() else "~/dev")).strip()
             if not 20&lt;=len(token)&lt;=512 or not all(32&lt;=ord(c)&lt;127 for c in token): self.send_json({"error":"Save a GitHub token in Settings or enter a token for this one-time setup."},400); return
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",repo_name): self.send_json({"error":"Use a repository name with letters, numbers, dots, underscores, or hyphens."},400); return
             if not overview: self.send_json({"error":"Add a short description for the repository profile."},400); return
@@ -1450,12 +1450,17 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed_support.scheme!="https" or not parsed_support.hostname or parsed_support.username or parsed_support.password: self.send_json({"error":"The support link must be a valid HTTPS address."},400); return
             if not parent_raw: self.send_json({"error":"Choose a parent folder for the clone."},400); return
             parent=Path(os.path.expanduser(parent_raw)).resolve()
+            # If the user typed a full clone path ending in the repo name, treat it as the target
+            if parent.name == repo_name:
+                target=parent
+                parent=target.parent
+            else:
+                target=(parent/repo_name).resolve()
             try:
                 parent.mkdir(parents=True, exist_ok=True)
             except OSError:
                 pass
             if not parent.is_dir(): self.send_json({"error":"Choose an existing local parent folder for the clone."},400); return
-            target=(parent/repo_name).resolve()
             if parent not in target.parents or target.exists(): self.send_json({"error":"The clone location already exists or is not inside the selected parent folder."},400); return
             try:
                 user=github_api(token,"/user"); owner=user.get("login", "")
@@ -1796,8 +1801,7 @@ if __name__=="__main__":
     if not running_on_unraid() and not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
     ThreadingHTTPServer.allow_reuse_address = True
     print(f"CA Workshop: http://{args.host}:{args.port}")
-    ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()
-</INLINE>
+    ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()</INLINE>
 </FILE>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/app.js">
 <INLINE>let aiConfig={configured:false,base_url:'',model:'',models:[],api_key_set:false};
@@ -2171,6 +2175,7 @@ async function discoverAIModels(){
   if(!base||!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base?.focus();aiChecking=false;return}
   const original=button.textContent;
   aiChecking=true;
+  button.disabled=true;
   if(status)status.textContent='Asking the endpoint for its model list…';
   try{
     const data=await api('/api/settings/ai/models',{method:'POST',body:JSON.stringify({base_url:base.value.trim(),api_key:key.value.trim()})});
@@ -2181,6 +2186,7 @@ async function discoverAIModels(){
     if(status)status.textContent=error.message;
   }finally{
     aiChecking=false;
+    button.disabled=false;
     button.textContent=original;
   }
 }
@@ -2192,7 +2198,8 @@ document.querySelector('#aiSettingsForm')?.addEventListener('submit',async event
   const key=document.querySelector('#aiApiKey');
   const model=document.querySelector('#aiModel');
   const status=document.querySelector('#aiSettingsStatus');
-  const button=event.currentTarget.querySelector('button[type="submit"]');
+  const button=document.querySelector('#aiSettingsForm button[type="submit"]');
+  if(!button){if(status)status.textContent='Save button unavailable.';return}
   if(!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base.focus();return}
   if(!model.value.trim()){if(status)status.textContent='Check the endpoint first to load models, then choose one.';return}
   button.disabled=true;
@@ -2508,7 +2515,7 @@ if __name__ == "__main__":
   &lt;link rel="stylesheet" href="style.css"&gt;
 &lt;/head&gt;
 &lt;body&gt;
-  &lt;aside class="rail"&gt;&lt;div class="brand"&gt;&lt;img src="ca-workshop.png" alt="CA Workshop" style="height:32px;width:auto;"&gt;&lt;span&gt;WORKSHOP&lt;/span&gt;&lt;small style="font-size:.65rem;color:var(--muted);display:block;margin-top:-2px"&gt;Community Apps Workshop · v2026.10.29s&lt;/small&gt;&lt;/div&gt;
+ &lt;aside class="rail"&gt;&lt;div class="brand"&gt;&lt;img src="ca-workshop.png" alt="CA Workshop" style="height:32px;width:auto;"&gt;&lt;span&gt;WORKSHOP&lt;/span&gt;&lt;small style="font-size:.65rem;color:var(--muted);display:block;margin-top:-2px"&gt;v2026.10.29t&lt;/small&gt;&lt;/div&gt;
     &lt;button class="nav active" data-page="repository"&gt;&lt;span&gt;▦&lt;/span&gt; Repository&lt;/button&gt;&lt;button class="nav" data-page="applications"&gt;&lt;span&gt;▣&lt;/span&gt; Applications&lt;/button&gt;&lt;div class="nav-tree" aria-label="Application pages"&gt;&lt;button class="nav-tree-item" data-page="applications"&gt;My apps&lt;/button&gt;&lt;button class="nav-tree-item" data-page="template-editor"&gt;Editor&lt;/button&gt;&lt;button class="nav-tree-item" data-page="application-stats"&gt;Statistics&lt;/button&gt;&lt;/div&gt;&lt;button class="nav" data-page="plugins"&gt;&lt;span&gt;⌘&lt;/span&gt; Plugins&lt;/button&gt;&lt;div class="nav-tree" aria-label="Plugin pages"&gt;&lt;button class="nav-tree-item" data-page="plugins"&gt;My plugins&lt;/button&gt;&lt;button class="nav-tree-item" data-page="plugin-stats"&gt;Statistics&lt;/button&gt;&lt;/div&gt;&lt;button class="nav" data-page="submissions"&gt;&lt;span&gt;⇧&lt;/span&gt; Submissions&lt;/button&gt;&lt;div class="rail-label tools-label"&gt;TOOLS&lt;/div&gt;&lt;button class="nav" data-page="ca-shim"&gt;&lt;span&gt;▤&lt;/span&gt; Repository preview&lt;/button&gt;&lt;button class="nav" data-page="settings"&gt;&lt;span&gt;⚙&lt;/span&gt; Settings&lt;/button&gt;&lt;button class="nav" data-page="docs"&gt;&lt;span&gt;⌘&lt;/span&gt; Unraid docs&lt;/button&gt;
     &lt;div class="rail-bottom"&gt;&lt;span class="avatar"&gt;M&lt;/span&gt;&lt;span&gt;&lt;b&gt;Local workspace&lt;/b&gt;&lt;small&gt;Not connected to CA&lt;/small&gt;&lt;/span&gt;&lt;span class="green-dot"&gt;&lt;/span&gt;&lt;/div&gt;
   &lt;/aside&gt;

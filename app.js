@@ -369,6 +369,7 @@ async function discoverAIModels(){
   if(!base||!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base?.focus();aiChecking=false;return}
   const original=button.textContent;
   aiChecking=true;
+  button.disabled=true;
   if(status)status.textContent='Asking the endpoint for its model list…';
   try{
     const data=await api('/api/settings/ai/models',{method:'POST',body:JSON.stringify({base_url:base.value.trim(),api_key:key.value.trim()})});
@@ -379,6 +380,7 @@ async function discoverAIModels(){
     if(status)status.textContent=error.message;
   }finally{
     aiChecking=false;
+    button.disabled=false;
     button.textContent=original;
   }
 }
@@ -390,7 +392,8 @@ document.querySelector('#aiSettingsForm')?.addEventListener('submit',async event
   const key=document.querySelector('#aiApiKey');
   const model=document.querySelector('#aiModel');
   const status=document.querySelector('#aiSettingsStatus');
-  const button=event.currentTarget.querySelector('button[type="submit"]');
+  const button=document.querySelector('#aiSettingsForm button[type="submit"]');
+  if(!button){if(status)status.textContent='Save button unavailable.';return}
   if(!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base.focus();return}
   if(!model.value.trim()){if(status)status.textContent='Check the endpoint first to load models, then choose one.';return}
   button.disabled=true;
