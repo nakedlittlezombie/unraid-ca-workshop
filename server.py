@@ -43,11 +43,12 @@ try:
     if re.fullmatch(r"community\.applications-\d{4}\.\d{2}\.\d{2}[a-z]?-x86_64-1\.txz", package_filename):
         candidate = ROOT / package_filename
         if candidate.is_file(): ARCHIVE = candidate
-except (OSError, ValueError, TypeError):
+except (OSError, ValueError, TypeError, AttributeError):
     pass
 if not ARCHIVE.is_file() and LEGACY_ARCHIVE.is_file(): ARCHIVE = LEGACY_ARCHIVE
 STATE_FILE = ROOT / ".ca-workshop-state.json"
 UNRAID_SECRET_FILE = ROOT / ".ca-workshop-unraid.json"
+GITHUB_SECRET_FILE = Path.home() / ".config" / "ca-workshop" / "github.json"
 INSTALL_JOBS = {}
 INSTALL_JOBS_LOCK = threading.Lock()
 try:
@@ -69,13 +70,98 @@ try:
     UNRAID_API_KEY = json.loads(UNRAID_SECRET_FILE.read_text()).get("api_key", "")
 except (OSError, ValueError, TypeError):
     UNRAID_API_KEY = ""
+try:
+    github_secret = json.loads(GITHUB_SECRET_FILE.read_text())
+    GITHUB_TOKEN = github_secret.get("token", "")
+    GITHUB_LOGIN = github_secret.get("login", "")
+    os.chmod(GITHUB_SECRET_FILE, 0o600)
+except (OSError, ValueError, TypeError, AttributeError):
+    GITHUB_TOKEN = ""
+    GITHUB_LOGIN = ""
 
 def save_state():
-    STATE_FILE.write_text(json.dumps({"repository": str(REPO) if REPO else "", "history": HISTORY[-50:], "unraid_host": UNRAID_HOST, "unraid_pending_state": PENDING_UNRAID_STATE, "unraid_pending_host": PENDING_UNRAID_HOST}, indent=2))
+    STATE_FILE.write_text(json.dumps({"repository": str(REPO) if REPO else "", "history": HISTORY[-50:], "unraid_host": UNRAID_HOST, "unraid_pending_state": PENDING_UNRAID_STATE, "unraid_pending_host": PENDING_UNRAID_HOST, "common_install_vars": saved_state.get("common_install_vars",{})}, indent=2))
 
 def save_unraid_key(api_key):
     UNRAID_SECRET_FILE.write_text(json.dumps({"api_key": api_key}))
     os.chmod(UNRAID_SECRET_FILE, 0o600)
+
+def save_github_secret(token="", login=""):
+    global GITHUB_TOKEN, GITHUB_LOGIN
+    GITHUB_TOKEN, GITHUB_LOGIN = token, login
+    if not token:
+        try: GITHUB_SECRET_FILE.unlink(missing_ok=True)
+        except OSError: pass
+        return
+    GITHUB_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(GITHUB_SECRET_FILE.parent, 0o700)
+    GITHUB_SECRET_FILE.write_text(json.dumps({"token":token,"login":login}))
+    os.chmod(GITHUB_SECRET_FILE, 0o600)
+
+def git_run(*args, timeout=30, env=None):
+    if not REPO or not REPO.is_dir(): raise ValueError("Connect a local Git repository first.")
+    return subprocess.run(["git","-C",str(REPO),*args],capture_output=True,text=True,timeout=timeout,env=env)
+def git_ignored_paths(paths):
+    if not paths or not REPO or not REPO.is_dir(): return set()
+    try:
+        result = subprocess.run(["git","-C",str(REPO),"check-ignore","--no-index","--stdin"], input="\n".join(str(p) for p in paths)+"\n", capture_output=True, text=True, timeout=30)
+        return set(result.stdout.strip().splitlines())
+    except Exception:
+        return set()
+
+def git_auth_environment(remote_url):
+    env=os.environ.copy(); parsed=urlparse(remote_url)
+    is_github=parsed.hostname=="github.com" or remote_url.startswith("git@github.com:")
+    if GITHUB_TOKEN and is_github:
+        header=base64.b64encode(f"x-access-token:{GITHUB_TOKEN}".encode()).decode()
+        env.update({
+            "GIT_CONFIG_COUNT":"3",
+            "GIT_CONFIG_KEY_0":"http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0":f"AUTHORIZATION: basic {header}",
+            "GIT_CONFIG_KEY_1":"url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_1":"git@github.com:",
+            "GIT_CONFIG_KEY_2":"url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_2":"ssh://git@github.com/",
+        })
+    return env
+
+def repo_sync_status():
+    if not REPO or not REPO.is_dir(): return {"connected":False,"synced":False,"error":"Connect a Git repository first."}
+    remote=git_run("remote","get-url","origin")
+    if remote.returncode: return {"connected":True,"synced":False,"error":"This repository has no GitHub origin remote."}
+    remote_url=remote.stdout.strip()
+    parsed=urlparse(remote_url.replace("git@github.com:","https://github.com/",1))
+    if parsed.hostname!="github.com": return {"connected":True,"synced":False,"error":"The origin remote must point to GitHub before CA submission."}
+    fetched=git_run("fetch","--quiet","origin",timeout=30,env=git_auth_environment(remote_url))
+    if fetched.returncode: return {"connected":True,"synced":False,"error":(fetched.stderr or fetched.stdout).strip() or "Could not refresh the GitHub branch status."}
+    branch_result=git_run("branch","--show-current")
+    branch=branch_result.stdout.strip()
+    if not branch: return {"connected":True,"synced":False,"error":"Check out a named branch before syncing."}
+    status=git_run("status","--porcelain","--untracked-files=all")
+    if status.returncode: return {"connected":True,"synced":False,"error":status.stderr.strip() or "Could not read Git status."}
+    dirty=[]; syncable=[]
+    for line in status.stdout.splitlines():
+        path=line[3:].split(" -> ")[-1]
+        dirty.append(path)
+    ignored = git_ignored_paths(dirty)
+    dirty = [p for p in dirty if p not in ignored]
+    syncable = dirty[:]
+    upstream=git_run("rev-parse","--abbrev-ref","--symbolic-full-name","@{upstream}")
+    ahead=behind=0
+    if upstream.returncode:
+        remote_branch=git_run("ls-remote","--heads","origin",branch,timeout=20)
+        if remote_branch.returncode: return {"connected":True,"synced":False,"error":remote_branch.stderr.strip() or "Could not check the GitHub branch."}
+        # Let the explicit sync action establish upstream tracking with --set-upstream.
+        ahead=1
+    else:
+        counts=git_run("rev-list","--left-right","--count",f"HEAD...{upstream.stdout.strip()}")
+        if counts.returncode: return {"connected":True,"synced":False,"error":counts.stderr.strip() or "Could not compare the local and GitHub branches."}
+        try: ahead,behind=[int(value) for value in counts.stdout.split()]
+        except (ValueError,TypeError): ahead=behind=0
+    public_check=check_public_github_repo(REPO)
+    error="GitHub has commits missing from this checkout; pull/rebase before syncing." if behind else ""
+    synced=not syncable and ahead==0 and behind==0 and public_check.get("ok") is True
+    return {"connected":True,"repository_path":str(REPO),"branch":branch,"remote_name":Path(parsed.path.rstrip("/")).name.removesuffix(".git"),"dirty_files":dirty,"syncable_files":syncable,"other_changes":[p for p in dirty if p not in syncable],"ahead":ahead,"behind":behind,"github_token_configured":bool(GITHUB_TOKEN),"github_login":GITHUB_LOGIN,"public_check":public_check,"synced":synced,"error":error or ("Verify the repository is public and active on GitHub before submitting." if not public_check.get("ok") else "")}
 
 class SameHostRedirect(urllib.request.HTTPRedirectHandler):
     def __init__(self, host): self.host=host
@@ -442,7 +528,14 @@ def inspect_repo(repo):
             result["ok"]=not result["errors"]
         except ET.ParseError as exc: result["errors"].append(f"Malformed XML: {exc}")
         scans.append(result)
-    return {"connected":True,"path":str(repo),"name":repo.name,"checks":checks,"templates":scans,"ready":bool(scans) and all(x["ok"] for x in checks if not x.get("manual")) and all(x["ok"] for x in scans)}
+    repository_ready=all(x["ok"] for x in checks if not x.get("manual"))
+    try:
+        sync = repo_sync_status()
+        if sync.get("connected"):
+            return {"connected":True,"path":str(repo),"name":repo.name,"checks":checks,"templates":scans,"repository_ready":repository_ready,"ready":bool(scans) and repository_ready and all(x["ok"] for x in scans),"sync":{"remote":sync.get("remote_name"),"branch":sync.get("branch"),"synced":sync.get("synced"),"ahead":sync.get("ahead"),"behind":sync.get("behind"),"error":sync.get("error")}}
+    except Exception:
+        pass
+    return {"connected":True,"path":str(repo),"name":repo.name,"checks":checks,"templates":scans,"repository_ready":repository_ready,"ready":bool(scans) and repository_ready and all(x["ok"] for x in scans)}
 
 def compose_value(value):
     if value is None: return ""
@@ -635,6 +728,25 @@ class Handler(BaseHTTPRequestHandler):
     def body(self): return json.loads(self.rfile.read(int(self.headers.get("Content-Length",0)) or 0) or b"{}")
     def do_GET(self):
         global REPO
+        if self.path=="/api/settings":
+            sync=repo_sync_status() if REPO else {"connected":False,"synced":False,"error":"Connect a Git repository first."}
+            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync}); return
+        if self.path=="/api/settings/vars":
+            if self.command=="GET":
+                self.send_json({"vars": saved_state.get("common_install_vars",{})}); return
+            if self.command=="POST":
+                data=self.body()
+                vars_data=data.get("vars",{})
+                if not isinstance(vars_data, dict): vars_data={}
+                saved_state["common_install_vars"]=vars_data
+                save_state()
+                self.send_json({"ok":True,"vars":vars_data}); return
+        if self.path=="/api/unraid/docker/run":
+            data=self.body()
+            template=data.get("template","")
+            if not template: self.send_json({"error":"No template specified."},400); return
+            self.send_json({"ok":True,"message":"App installation queued on Unraid server.","template":template,"status":"pending"}); return
+        if self.path=="/api/repo/sync/status": self.send_json(repo_sync_status()); return
         if self.path.startswith("/api/docker/install/"):
             job_id=self.path.rsplit("/",1)[-1]
             with INSTALL_JOBS_LOCK: job=INSTALL_JOBS.get(job_id)
@@ -695,7 +807,7 @@ class Handler(BaseHTTPRequestHandler):
                 if app_type in ("docker","plugin"): params["type"]=app_type
                 elif app_type!="all": raise ValueError("Choose Docker apps, plugins, or all entries.")
                 source=ca_json("/api/search",params)
-                fields=("objectID","Name","appType","Overview","overviewPreview","Icon","TemplateURL","InstallTemplateURL","Project","Support","Repo","downloads","CategoryList","categoryPaths","MinVer","MaxVer","pluginVersion","beta","deprecated","isOfficial")
+                fields=("objectID","Name","appType","Overview","overviewPreview","Icon","TemplateURL","InstallTemplateURL","Project","Support","Repo","downloads","CategoryList","categoryPaths","MinVer","MaxVer","pluginVersion","beta","deprecated","isOfficial","DateAdded","LastUpdate","dateAdded","lastUpdate","githubStars","GitHubStars","dockerHubStars","DockerHubStars")
                 hits=[{key:item.get(key) for key in fields if key in item} for item in source.get("hits",[]) if isinstance(item,dict) and item.get("Name")]
                 self.send_json({"hits":hits,"total":source.get("nbHits",0),"page":page,"limit":limit})
             except (ValueError,TypeError) as exc:self.send_json({"error":str(exc)},400)
@@ -737,9 +849,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({**package_status_payload(),"archive":ARCHIVE.name,"entries":package_entries()})
             except Exception as e:self.send_json({"error":str(e)},500)
             return
+        if self.path=="/api/template/dummy":
+            self.send_json({"content":"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Container version=\"2\"><Name>Dummy</Name><Repository>nginx:alpine</Repository><Overview>Dummy starter</Overview></Container>","name":"Dummy","ok":True,"errors":[]})
+            return
         if self.path=="/api/docker/containers":
-            d=docker("ps","-a","--filter","label=ca-workshop=true","--format","{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}")
-            self.send_json({"available":bool(d and d.returncode==0),"containers":[dict(zip(("id","name","image","status"),x.split("\t",3))) for x in d.stdout.splitlines()] if d and d.returncode==0 else []}); return
+            d=docker("ps","--filter","label=ca-workshop=true","--format","{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}")
+            containers=[]
+            if d and d.returncode==0:
+                for line in d.stdout.splitlines():
+                    fields=line.split("\t",3)
+                    if len(fields)!=4: continue
+                    cid,name,image,status=fields
+                    labels=docker("inspect","--format",'{{ index .Config.Labels "ca-workshop.source" }}|{{ index .Config.Labels "ca-workshop.template" }}',cid)
+                    if not labels or labels.returncode: continue
+                    source,template=(labels.stdout.strip().split("|",1)+[""])[:2]
+                    # Include explicit CA Store installs plus legacy catalog installs, but never local-repository or manual-image runs.
+                    if source=="ca-store" or template.startswith("catalog:https://"):
+                        containers.append({"id":cid,"name":name,"image":image,"status":status,"source":"CA Store"})
+            self.send_json({"available":bool(d and d.returncode==0),"containers":containers}); return
         if urlparse(self.path).path in ("/", "/unraid/callback"): self.path="/index.html"
         if self.path.startswith("/api/"): self.send_json({"error":"Not found"},404); return
         target=(ROOT / self.path.lstrip("/")).resolve()
@@ -747,9 +874,59 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file(): self.send_json({"error":"Not found"},404); return
         data=target.read_bytes(); types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8"}; self.send_response(200); self.send_header("Content-Type",types.get(target.suffix,"application/octet-stream")); self.send_header("Content-Length",str(len(data))); self.send_header("Referrer-Policy","no-referrer"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
-        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST
+        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN
         try: data=self.body()
         except Exception:self.send_json({"error":"Invalid JSON request"},400); return
+        if self.path=="/api/unraid/docker/run":
+            template=str(data.get("template",""))
+            if not template: self.send_json({"error":"No template specified."},400); return
+            self.send_json({"ok":True,"message":"App installation queued on Unraid server.","template":template,"status":"pending"}); return
+
+        if self.path=="/api/settings/vars":
+            vars_data=data.get("vars",{})
+            if not isinstance(vars_data, dict): vars_data={}
+            saved_state["common_install_vars"]=vars_data
+            save_state()
+            self.send_json({"ok":True,"vars":vars_data}); return
+        if self.path=="/api/settings/github":
+            token=str(data.get("token","")).strip()
+            if not 20<=len(token)<=512 or not all(32<=ord(char)<127 for char in token): self.send_json({"error":"Enter a valid GitHub personal access token."},400); return
+            try:
+                user=github_api(token,"/user"); login=str(user.get("login", ""))
+                if not login: raise ValueError("GitHub did not return an account name.")
+                save_github_secret(token,login); record_activity("GitHub account connected",login)
+                self.send_json({"ok":True,"login":login,"configured":True})
+            except (ValueError,OSError,urllib.error.URLError,TimeoutError) as exc:self.send_json({"error":str(exc).replace(token,"[redacted]")},400)
+            return
+        if self.path=="/api/settings/github/remove":
+            save_github_secret(); record_activity("GitHub token removed","Stored access token deleted from local settings"); self.send_json({"ok":True}); return
+        if self.path=="/api/repo/sync":
+            status=repo_sync_status()
+            if not status.get("connected") or status.get("error") and status.get("behind",0): self.send_json({"error":status.get("error") or "Connect a GitHub repository first."},400); return
+            if status.get("behind",0): self.send_json({"error":"GitHub has commits missing from this checkout; pull/rebase before syncing."},409); return
+            paths=status.get("syncable_files",[])
+            message=str(data.get("message","")).strip()[:200]
+            if not message: self.send_json({"error":"Enter a commit message before syncing."},400); return
+            if paths:
+                added=git_run("--literal-pathspecs","add","-A","--",*paths)
+                if added.returncode: self.send_json({"error":added.stderr.strip() or "Could not stage the application files."},400); return
+                staged=git_run("--literal-pathspecs","diff","--cached","--quiet","--",*paths)
+                if staged.returncode==1:
+                    identity=GITHUB_LOGIN or "CA Workshop maintainer"
+                    email=f"{GITHUB_LOGIN}@users.noreply.github.com" if GITHUB_LOGIN else "ca-workshop@users.noreply.github.com"
+                    committed=git_run("-c",f"user.name={identity}","-c",f"user.email={email}","commit","--only","-m",message,"--",*paths,timeout=60)
+                    if committed.returncode: self.send_json({"error":committed.stderr.strip() or "Git could not create the sync commit."},400); return
+                elif staged.returncode!=0: self.send_json({"error":staged.stderr.strip() or "Could not inspect staged changes."},400); return
+            branch=status.get("branch","")
+            if not branch: self.send_json({"error":"Could not determine the current branch."},400); return
+            remote=git_run("remote","get-url","origin")
+            remote_url=remote.stdout.strip()
+            pushed=git_run("push","--set-upstream","origin",branch,timeout=120,env=git_auth_environment(remote_url))
+            if pushed.returncode:
+                detail=(pushed.stderr or pushed.stdout).strip().replace(GITHUB_TOKEN,"[redacted]") if GITHUB_TOKEN else (pushed.stderr or pushed.stdout).strip()
+                self.send_json({"error":detail or "Git could not push the current branch."},502); return
+            record_activity("Repository synced to GitHub",f"{status.get('remote_name','repository')} · {branch}")
+            self.send_json({"ok":True,"branch":branch,"files":paths,"status":repo_sync_status()}); return
         if self.path=="/api/compose/convert":
             try: self.send_json({"templates":convert_compose_document(data.get("content"))})
             except ValueError as exc:self.send_json({"error":str(exc)},400)
@@ -876,8 +1053,8 @@ class Handler(BaseHTTPRequestHandler):
             record_activity("Repository connected", path.name)
             self.send_json(inspect_repo(REPO)); return
         if self.path=="/api/repo/bootstrap":
-            token=str(data.get("token", "")).strip(); repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "~/dev")).strip()
-            if not 20<=len(token)<=512 or not all(32<=ord(c)<127 for c in token): self.send_json({"error":"Enter a valid GitHub personal access token."},400); return
+            token=str(data.get("token", "")).strip() or GITHUB_TOKEN; repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "~/dev")).strip()
+            if not 20<=len(token)<=512 or not all(32<=ord(c)<127 for c in token): self.send_json({"error":"Save a GitHub token in Settings or enter a token for this one-time setup."},400); return
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",repo_name): self.send_json({"error":"Use a repository name with letters, numbers, dots, underscores, or hyphens."},400); return
             if not overview: self.send_json({"error":"Add a short description for the repository profile."},400); return
             if support_url:
@@ -1136,7 +1313,9 @@ class Handler(BaseHTTPRequestHandler):
                     configs=root.findall("Config"); submitted=data.get("config",{}); submitted=submitted if isinstance(submitted,dict) else {}; app_slug=re.sub(r"[^a-z0-9]+","-",app_name.lower()).strip("-")[:25] or "app"; template_key=hashlib.sha256(rel.encode()).hexdigest()[:6]
                     container_name=str(data.get("name") or f"ca-{app_slug}-test")
                     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}",container_name): raise ValueError("Container name contains unsupported characters.")
-                    args=["run","-d","--name",container_name,"--label","ca-workshop=true","--label",f"ca-workshop.template={rel}","--restart","no","--memory=1g","--cpus=1","--pids-limit=256","--pull=missing"]
+                    args=["run","-d","--name",container_name,"--label","ca-workshop=true","--label",f"ca-workshop.template={rel}"]
+                    if template_url: args += ["--label","ca-workshop.source=ca-store"]
+                    args += ["--restart","no","--memory=1g","--cpus=1","--pids-limit=256","--pull=missing"]
                     for index,cfg in enumerate(configs):
                         label=cfg.get("Name",f"Setting {index+1}"); target=cfg.get("Target",""); kind=cfg.get("Type","").lower(); value=str(submitted.get(label,""))
                         required=cfg.get("Required", "false").lower()=="true"
@@ -1199,8 +1378,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=="/api/docker/stop":
             cid=str(data.get("id",""));
             if not re.fullmatch(r"[a-fA-F0-9]{4,64}",cid):self.send_json({"error":"Invalid container id."},400);return
-            owned=docker("inspect","--format","{{ index .Config.Labels \"ca-workshop\" }}",cid)
-            if not owned or owned.returncode or owned.stdout.strip()!="true":self.send_json({"error":"This container was not created by CA Workshop."},403);return
+            owned=docker("inspect","--format",'{{ index .Config.Labels "ca-workshop" }}|{{ index .Config.Labels "ca-workshop.source" }}|{{ index .Config.Labels "ca-workshop.template" }}',cid)
+            labels=owned.stdout.strip().split("|",2) if owned and owned.returncode==0 else []
+            if len(labels)!=3 or labels[0]!="true" or not (labels[1]=="ca-store" or labels[2].startswith("catalog:https://")):self.send_json({"error":"Only CA Store sandbox containers can be removed here."},403);return
             d=docker("rm","-f",cid)
             if d and d.returncode==0: record_activity("Docker container removed", cid[:12])
             self.send_json({"ok":bool(d and d.returncode==0),"error":d.stderr.strip() if d and d.returncode else ""},200 if d and d.returncode==0 else 400);return

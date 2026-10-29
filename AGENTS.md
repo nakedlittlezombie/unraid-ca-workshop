@@ -2,7 +2,20 @@
 
 ## Project
 
-CA Workshop is a loopback-only web workbench for preparing Unraid Community Applications repositories, using the official submission portal, browsing CA listings, inspecting the Community Applications package, and testing supported Docker templates. Read `README.md` for the current user-facing feature set and startup instructions.
+CA Workshop is a loopback-only workbench that helps maintain a Community Applications repository through the full app lifecycle: create or import apps, validate repository files and templates, track CA submissions and approvals, and maintain published apps. Read `README.md` for the current user-facing feature set and startup instructions.
+
+Keep the central workflow focused on helping a maintainer:
+
+1. Add apps by editing a template manually, converting a Compose file, or pointing to a repository so the app can find a Compose file and generate a template.
+2. Populate the required repository files, validate the app and repository, and guide the maintainer to the CA submission process.
+3. Track each app from submission through review, approval, and publication. Treat the official CA portal as authoritative unless an official integration supplies status; never infer approval.
+4. Manage published apps and show available store details such as application type, categories, added and updated dates, GitHub stars, CA downloads, image/repository, and Docker Hub stars. Preserve the source and meaning of each metric, and show unavailable values as unavailable rather than zero.
+
+The `.unraid/community-apps-claim.json` file is repository claim metadata. Treat its nonce and public claim code as user-provided values; do not invent them.
+
+The workspace sidebar separates Repository setup, Docker Applications, Plugins, shared Submissions, CA Store, and Tools. Keep Docker template creation/editing, Compose conversion, per-app validation results, app icons, and app statistics in Applications. Keep plugin listings and plugin statistics in Plugins; plugin editing and installation remain deferred. Use the single Submissions page to track Docker apps and plugins together. The Repository file browser and readiness checks are for repository setup and metadata; exclude app-specific template errors and app icons there. Submission markers are local user-entered tracking data; never present them as portal-confirmed status.
+
+The CA Store browser loads paginated catalog results as the user scrolls. Docker install settings belong in its right-side drawer. Common install variables are saved server-side in `.ca-workshop-state.json` via `/api/settings/vars` and fill matching Docker environment variables by exact name; treat these values as user-local data and do not describe them as encrypted or sync them to GitHub.
 
 ## Code map
 
@@ -19,11 +32,11 @@ Keep each feature's behavior aligned across its server endpoint, UI, and README 
 ## Safety and data
 
 - Keep the web server bound to `127.0.0.1`; do not expose it to the network without a deliberate security design.
-- Keep `.ca-workshop-state.json`, `.ca-workshop-unraid.json`, `.ca-workshop-package.json`, downloaded archives, and credentials out of Git. Never print or commit tokens or API keys.
+- Keep `.ca-workshop-state.json`, `.ca-workshop-unraid.json`, `.ca-workshop-package.json`, downloaded archives, and credentials out of Git. Never print or commit tokens or API keys. GitHub credentials may be persisted only in `~/.config/ca-workshop/github.json` with owner-only permissions; Unraid credentials remain in the existing owner-only local secret file.
 - Download the CA package only from the official `unraid/community.applications` GitHub archive. Validate the expected filename, size, Git blob hash, and TXZ contents before activating a download. Do not execute or extract the package; the app previews selected files only.
 - Treat repository templates and container images as third-party code. Preserve the Docker adapter's loopback-only port publishing, resource limits, isolated volumes by default, explicit bind mounts, and restrictions on privileged settings.
 - Request only the Unraid API scopes needed for a feature. Keep CA portal sign-in separate from Unraid server authorization.
-- Repository edits are local until committed and pushed. GitHub tokens must remain transient and must not be saved.
+- Repository edits are local until committed and pushed. The Settings page stores a verified GitHub token securely for GitHub pushes; sync only stages supported submission files and never force-pushes. Require relevant submission files to be synced to a public, active GitHub repository before marking an item submitted.
 
 ## Working approach
 

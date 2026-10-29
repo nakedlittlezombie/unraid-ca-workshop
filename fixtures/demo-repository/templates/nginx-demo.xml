@@ -1,9 +1,0 @@
-<Container version="2">
-  <Name>CA Workshop Demo Web</Name>
-  <Repository>nginx:alpine</Repository>
-  <Network>bridge</Network>
-  <Overview>Small local test web server for exercising CA Workshop's Docker template adapter.</Overview>
-  <Support>https://github.com/nakedlittlezombie/unraid-community-apps</Support>
-  <Project>https://nginx.org/</Project>
-  <Config Name="WebUI" Target="80" Default="18080" Mode="tcp" Description="Local web port" Type="Port" Required="true"/>
-</Container>
