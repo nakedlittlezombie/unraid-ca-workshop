@@ -19,10 +19,22 @@ service. The service itself is never bound to a LAN address.
   without it; Compose conversion warns that PyYAML is unavailable.
 - Optional: **Community Applications** installed on the same server.
 
-## Build
+## Build and Release
 
-The plugin is self-contained. Generate a `.plg` with the public URL where you will
-host it:
+To build the plugin package, commit changes, push to GitHub, and create or update a GitHub release in one step:
+
+```sh
+# Auto-detects next version for today, builds, commits, pushes, and releases:
+./scripts/release.sh
+
+# Or with specific version and notes:
+./scripts/release.sh --version 2026.10.30 --notes "Added new dashboard features"
+
+# Or using GitHub's auto-generated commit notes:
+./scripts/release.sh --generate-notes
+```
+
+To build locally without committing or releasing:
 
 ```sh
 python3 scripts/build_unraid_plugin.py \
@@ -32,7 +44,7 @@ python3 scripts/build_unraid_plugin.py \
   --output dist
 ```
 
-The output is `dist/ca-workshop-<version>.plg`. Host that file at the URL you passed
+The output is `dist/ca-workshop-<version>.plg` and `dist/ca-workshop.plg`. Host that file at the URL you passed
 to `--plugin-url`, then install it from **Plugins → Install Plugin** in the Unraid
 webGUI or with:
 

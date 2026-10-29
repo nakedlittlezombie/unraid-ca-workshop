@@ -58,7 +58,7 @@ The `unraid/` folder packages CA Workshop for an Unraid host. The generated plug
 
 When installed on Unraid, CA Workshop detects the host and switches to Unraid mode: Docker uses `/var/run/docker.sock`, plugin actions call Unraid's own plugin manager, and Community Applications is detected at its standard plugin path. CA Store plugin entries then offer **Install plugin** after confirmation. An optional Unraid Dashboard widget displays your pending approvals and approved apps as icons with statuses below. A dedicated Settings page under Unraid **Settings → User Utilities** allows configuring the dashboard widget and customizing WebGUI navigation placement (dedicated top tab, Tools/Utilities menu, or hidden). The local Docker sandbox view is hidden on Unraid in favor of native Unraid Docker management. Saved settings live in `/boot/config/plugins/ca-workshop` so they survive reboots.
 
-Build the plugin with `python3 scripts/build_unraid_plugin.py --version <version> --plugin-url <public-url>`. See [`unraid/README.md`](unraid/README.md) for requirements, install/uninstall steps, and security notes. The host needs Python 3; install it with a package such as NerdTools if necessary.
+Build and release the plugin to GitHub with `./scripts/release.sh` (or build locally with `python3 scripts/build_unraid_plugin.py --version <version> --plugin-url <public-url>`). See [`unraid/README.md`](unraid/README.md) for requirements, install/uninstall steps, and security notes. The host needs Python 3; install it with a package such as NerdTools if necessary.
 
 ### Connect an Unraid server
 
