@@ -89,11 +89,17 @@ try:
     UNRAID_API_KEY = json.loads(UNRAID_SECRET_FILE.read_text()).get("api_key", "")
 except (OSError, ValueError, TypeError):
     UNRAID_API_KEY = ""
+def safe_chmod(path, mode):
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
 try:
     github_secret = json.loads(GITHUB_SECRET_FILE.read_text())
     GITHUB_TOKEN = github_secret.get("token", "")
     GITHUB_LOGIN = github_secret.get("login", "")
-    os.chmod(GITHUB_SECRET_FILE, 0o600)
+    safe_chmod(GITHUB_SECRET_FILE, 0o600)
 except (OSError, ValueError, TypeError, AttributeError):
     GITHUB_TOKEN = ""
     GITHUB_LOGIN = ""
@@ -103,7 +109,7 @@ try:
     AI_API_KEY = str(ai_secret.get("api_key", ""))
     AI_MODEL = str(ai_secret.get("model", ""))
     AI_MODELS = [str(item) for item in ai_secret.get("models", []) if isinstance(item, (str, int, float))][:500]
-    os.chmod(AI_SECRET_FILE, 0o600)
+    safe_chmod(AI_SECRET_FILE, 0o600)
 except (OSError, ValueError, TypeError, AttributeError):
     AI_BASE_URL = ""
     AI_API_KEY = ""
@@ -136,7 +142,7 @@ def apply_unraid_menu_placement(placement):
 
 def save_unraid_key(api_key):
     UNRAID_SECRET_FILE.write_text(json.dumps({"api_key": api_key}))
-    os.chmod(UNRAID_SECRET_FILE, 0o600)
+    safe_chmod(UNRAID_SECRET_FILE, 0o600)
 
 def save_github_secret(token="", login=""):
     global GITHUB_TOKEN, GITHUB_LOGIN
@@ -146,9 +152,9 @@ def save_github_secret(token="", login=""):
         except OSError: pass
         return
     GITHUB_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(GITHUB_SECRET_FILE.parent, 0o700)
+    safe_chmod(GITHUB_SECRET_FILE.parent, 0o700)
     GITHUB_SECRET_FILE.write_text(json.dumps({"token":token,"login":login}))
-    os.chmod(GITHUB_SECRET_FILE, 0o600)
+    safe_chmod(GITHUB_SECRET_FILE, 0o600)
 
 def save_ai_config(base_url="", api_key="", model="", models=None):
     global AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_MODELS
@@ -159,9 +165,9 @@ def save_ai_config(base_url="", api_key="", model="", models=None):
         except OSError: pass
         return
     AI_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(AI_SECRET_FILE.parent, 0o700)
+    safe_chmod(AI_SECRET_FILE.parent, 0o700)
     AI_SECRET_FILE.write_text(json.dumps({"base_url":base_url,"api_key":api_key,"model":model,"models":AI_MODELS}))
-    os.chmod(AI_SECRET_FILE, 0o600)
+    safe_chmod(AI_SECRET_FILE, 0o600)
 
 def ai_config_payload():
     return {"configured":bool(AI_BASE_URL and AI_MODEL),"base_url":AI_BASE_URL,"model":AI_MODEL,"models":AI_MODELS,"api_key_set":bool(AI_API_KEY)}
@@ -1774,6 +1780,7 @@ if __name__=="__main__":
     if args.host not in ("127.0.0.1","::1","localhost"):
         raise SystemExit("CA Workshop only binds to loopback. Use 127.0.0.1, ::1, or localhost.")
     if not 1<=args.port<=65535: raise SystemExit("Choose a port between 1 and 65535.")
-    if not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
+    if not running_on_unraid() and not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
+    ThreadingHTTPServer.allow_reuse_address = True
     print(f"CA Workshop: http://{args.host}:{args.port}")
     ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()

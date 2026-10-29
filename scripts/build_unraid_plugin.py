@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import re
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -33,6 +34,12 @@ APP_FILES = [
 
 def plugin_index_html() -> str:
     source = (ROOT / "index.html").read_text(encoding="utf-8")
+    # In Unraid plugin mode: Docker sandbox and CA package archives/updates are not needed
+    source = re.sub(r'<button class="nav" data-page="sandbox"><span>.*?</span> Docker sandbox</button>\s*', '', source)
+    source = re.sub(r'<section id="sandbox" class="page">[\s\S]*?</section>\s*', '', source)
+    source = re.sub(r'<section class="panel settings-card package-card">[\s\S]*?</section>\s*', '', source)
+    source = re.sub(r'<div id="packageOverlay" class="overlay hidden">[\s\S]*?</div></div>\s*', '', source)
+
     bootstrap = (
         "<script>\n"
         "window.CA_WORKSHOP_API_BASE='api.php?path=';\n"

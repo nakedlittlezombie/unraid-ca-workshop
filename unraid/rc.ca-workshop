@@ -22,8 +22,13 @@ apply_menu_placement() {
 }
 
 start_service() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    return 0
+  if [ -f "$PIDFILE" ]; then
+    local current_pid
+    current_pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$current_pid" ] && kill -0 "$current_pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$PIDFILE"
   fi
   mkdir -p "$CONFIG_DIR" || return 1
   apply_menu_placement
@@ -35,11 +40,13 @@ start_service() {
   export CA_WORKSHOP_UNRAID=1
   export CA_WORKSHOP_CONFIG_DIR="$CONFIG_DIR"
   export CA_WORKSHOP_STATE_DIR="$CONFIG_DIR"
+  command -v fuser >/dev/null 2>&1 && fuser -k 8765/tcp 2>/dev/null || true
   nohup python3 server.py --host 127.0.0.1 --port 8765 >> "$LOGFILE" 2>&1 &
-  echo $! > "$PIDFILE"
+  local new_pid=$!
+  echo "$new_pid" > "$PIDFILE"
   sleep 1
-  if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "CA Workshop started on 127.0.0.1:8765" >> "$LOGFILE"
+  if kill -0 "$new_pid" 2>/dev/null; then
+    echo "CA Workshop started on 127.0.0.1:8765 (pid $new_pid)" >> "$LOGFILE"
     return 0
   fi
   rm -f "$PIDFILE"
@@ -48,9 +55,19 @@ start_service() {
 
 stop_service() {
   if [ -f "$PIDFILE" ]; then
-    kill "$(cat "$PIDFILE")" 2>/dev/null
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      for _ in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2
+      done
+      kill -9 "$pid" 2>/dev/null
+    fi
     rm -f "$PIDFILE"
   fi
+  command -v fuser >/dev/null 2>&1 && fuser -k 8765/tcp 2>/dev/null || true
 }
 
 case "$1" in

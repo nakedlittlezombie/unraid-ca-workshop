@@ -192,6 +192,7 @@ def main() -> int:
     # 2. Git stage, commit, and push
     if not args.skip_commit:
         print("▶ Checking git status…")
+        run(["git", "add", "-u"], check=True)
         run(["git", "add", str(versioned_plg), str(canonical_plg)], check=True)
 
         # Check if there are changes to commit

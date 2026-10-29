@@ -64,16 +64,49 @@ curl_setopt_array($handle, [
     CURLOPT_TIMEOUT => 180,
     CURLOPT_HTTPHEADER => $headers,
 ]);
+$body_payload = null;
 if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-    $body = $post_payload !== null ? $post_payload : file_get_contents('php://input');
-    curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
+    $body_payload = $post_payload !== null ? $post_payload : file_get_contents('php://input');
+    curl_setopt($handle, CURLOPT_POSTFIELDS, $body_payload);
 }
 
 $body = curl_exec($handle);
-$status = (int) (curl_getinfo($handle, CURLINFO_RESPONSE_CODE) ?: 502);
-$contentType = curl_getinfo($handle, CURLINFO_CONTENT_TYPE) ?: 'application/json';
-$error = curl_error($handle);
-curl_close($handle);
+if ($body === false) {
+    // If the loopback service is down, attempt to start it and retry once
+    $rc = '/usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop';
+    if (file_exists($rc)) {
+        @exec('/bin/bash ' . escapeshellarg($rc) . ' start >/dev/null 2>&1');
+        usleep(900000); // Wait 900ms for service to start
+        $retry_handle = curl_init($url);
+        curl_setopt_array($retry_handle, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 180,
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        if ($body_payload !== null) {
+            curl_setopt($retry_handle, CURLOPT_POSTFIELDS, $body_payload);
+        }
+        $body = curl_exec($retry_handle);
+        $status = (int) (curl_getinfo($retry_handle, CURLINFO_RESPONSE_CODE) ?: 502);
+        $contentType = curl_getinfo($retry_handle, CURLINFO_CONTENT_TYPE) ?: 'application/json';
+        $error = curl_error($retry_handle);
+        curl_close($retry_handle);
+        curl_close($handle);
+    } else {
+        $status = (int) (curl_getinfo($handle, CURLINFO_RESPONSE_CODE) ?: 502);
+        $contentType = curl_getinfo($handle, CURLINFO_CONTENT_TYPE) ?: 'application/json';
+        $error = curl_error($handle);
+        curl_close($handle);
+    }
+} else {
+    $status = (int) (curl_getinfo($handle, CURLINFO_RESPONSE_CODE) ?: 502);
+    $contentType = curl_getinfo($handle, CURLINFO_CONTENT_TYPE) ?: 'application/json';
+    $error = curl_error($handle);
+    curl_close($handle);
+}
 
 if ($body === false) {
     $status = 502;
