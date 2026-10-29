@@ -457,3 +457,4 @@ async function loadRuntime(){
 }
 loadRuntime();
 document.querySelector('#browseParent')?.addEventListener('click',async()=>{try{const path=window.prompt('Enter parent folder for clone (e.g. /mnt/cache or /home/user/dev):');if(path){const p=document.querySelector('#bootstrapParent');if(p)p.value=path.trim();}}catch(e){}});
+document.querySelector('#openRepo')?.addEventListener('click',()=>connectRepo());

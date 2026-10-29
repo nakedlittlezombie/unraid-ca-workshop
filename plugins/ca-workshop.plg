@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29i" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29i. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29j" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29j. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -2259,6 +2259,7 @@ async function loadRuntime(){
 }
 loadRuntime();
 document.querySelector('#browseParent')?.addEventListener('click',async()=&gt;{try{const path=window.prompt('Enter parent folder for clone (e.g. /mnt/cache or /home/user/dev):');if(path){const p=document.querySelector('#bootstrapParent');if(p)p.value=path.trim();}}catch(e){}});
+document.querySelector('#openRepo')?.addEventListener('click',()=&gt;connectRepo());
 </INLINE>
 </FILE>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/style.css">
