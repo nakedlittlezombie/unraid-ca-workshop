@@ -382,7 +382,7 @@ async function discoverAIModels(){
   }
 }
 
-document.querySelector('#aiDiscoverModels')?.addEventListener('click',discoverAIModels);
+document.querySelector('#aiDiscoverModels')?.addEventListener('click',event=>{event.preventDefault();discoverAIModels();});
 document.querySelector('#aiSettingsForm')?.addEventListener('submit',async event=>{
   event.preventDefault();
   const base=document.querySelector('#aiBaseUrl');
@@ -447,6 +447,7 @@ async function loadRuntime(){
     runtime={...runtime,...await api('/api/runtime')};
     renderRuntime();
     updateUnraidModeUI();
+    if(runtime.unraid){const p=document.querySelector('input[name="parent"]');if(p&&!p.value.trim())p.value='/mnt/cache';}
     return runtime;
   }catch(error){
     const box=document.querySelector('#runtimeStatus');
