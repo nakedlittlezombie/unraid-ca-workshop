@@ -1,0 +1,52 @@
+#!/bin/bash
+# CA Workshop service control for the Unraid plugin.
+PLUGIN_DIR="/usr/local/emhttp/plugins/ca-workshop"
+CONFIG_DIR="/boot/config/plugins/ca-workshop"
+PIDFILE="/var/run/ca-workshop.pid"
+LOGFILE="/var/log/ca-workshop.log"
+
+start_service() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p "$CONFIG_DIR" || return 1
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required. Install Python 3 (for example with NerdTools) and restart CA Workshop." >> "$LOGFILE"
+    return 1
+  fi
+  cd "$PLUGIN_DIR" || return 1
+  export CA_WORKSHOP_UNRAID=1
+  export CA_WORKSHOP_CONFIG_DIR="$CONFIG_DIR"
+  export CA_WORKSHOP_STATE_DIR="$CONFIG_DIR"
+  nohup python3 server.py --host 127.0.0.1 --port 8765 >> "$LOGFILE" 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 1
+  if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "CA Workshop started on 127.0.0.1:8765" >> "$LOGFILE"
+    return 0
+  fi
+  rm -f "$PIDFILE"
+  return 1
+}
+
+stop_service() {
+  if [ -f "$PIDFILE" ]; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+  fi
+}
+
+case "$1" in
+  start) start_service ;;
+  stop) stop_service ;;
+  restart) stop_service; sleep 1; start_service ;;
+  status)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "running"
+      exit 0
+    fi
+    echo "stopped"
+    exit 1
+    ;;
+  *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
+esac

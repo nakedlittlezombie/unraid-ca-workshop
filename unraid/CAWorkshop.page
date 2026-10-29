@@ -1,0 +1,14 @@
+Menu="Utilities:10"
+Name="CA Workshop"
+Type="xmenu"
+Tabs="false"
+---
+<style>
+  .caw-frame-wrap { margin: -12px -12px 0; }
+  .caw-frame { display: block; width: 100%; height: calc(100vh - 92px); min-height: 620px; border: 0; background: #18181b; }
+  .caw-frame-note { margin: 0 0 8px; color: #8a9490; font-size: 11px; }
+</style>
+<p class="caw-frame-note">CA Workshop runs as a loopback-only service on this Unraid server. API calls are relayed through the plugin page; the service is not exposed on the network.</p>
+<div class="caw-frame-wrap">
+  <iframe class="caw-frame" src="/plugins/ca-workshop/index.html" title="CA Workshop"></iframe>
+</div>

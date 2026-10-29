@@ -1,0 +1,155 @@
+Menu="Dashboard"
+Icon="fa-cubes"
+Title="CA Workshop"
+Tag="cubes"
+---
+<?php
+/*
+ * Unraid Dashboard Tile for CA Workshop
+ * Displays repository apps, pending approvals, and approval statuses with icons.
+ */
+$state_file = (getenv('CA_WORKSHOP_STATE_DIR') ?: '/boot/config/plugins/ca-workshop') . '/.ca-workshop-state.json';
+$widget_enabled = true;
+if (file_exists($state_file)) {
+    $raw = @file_get_contents($state_file);
+    $saved = $raw ? json_decode($raw, true) : null;
+    if (is_array($saved) && array_key_exists('dashboard_widget_enabled', $saved)) {
+        $widget_enabled = (bool)$saved['dashboard_widget_enabled'];
+    }
+}
+
+// Fetch live widget data from local loopback service
+$service_url = 'http://127.0.0.1:8765/api/dashboard/widget';
+$context = stream_context_create([
+    'http' => [
+        'timeout' => 1.5,
+        'header' => "Accept: application/json\r\n"
+    ]
+]);
+$service_data = @file_get_contents($service_url, false, $context);
+$widget = $service_data ? json_decode($service_data, true) : null;
+if ($widget && array_key_exists('enabled', $widget)) {
+    $widget_enabled = (bool)$widget['enabled'];
+}
+?>
+
+<style>
+.caw-dash-box { padding: 10px 14px 14px; }
+.caw-dash-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 11px; }
+.caw-dash-stats { display: flex; gap: 8px; align-items: center; }
+.caw-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.caw-badge-pending { background: rgba(227, 98, 9, 0.15); color: #e36209; border: 1px solid rgba(227, 98, 9, 0.35); }
+.caw-badge-approved { background: rgba(46, 160, 67, 0.15); color: #2ea44f; border: 1px solid rgba(46, 160, 67, 0.35); }
+.caw-badge-draft { background: rgba(140, 149, 159, 0.15); color: #8c959f; border: 1px solid rgba(140, 149, 159, 0.3); }
+.caw-badge-changes { background: rgba(207, 34, 46, 0.15); color: #cf222e; border: 1px solid rgba(207, 34, 46, 0.35); }
+
+.caw-app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px; text-align: center; }
+.caw-app-tile { display: flex; flex-direction: column; align-items: center; padding: 10px 6px 8px; border-radius: 8px; text-decoration: none !important; color: inherit !important; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); transition: all 0.15s ease-in-out; }
+.caw-app-tile:hover { background: rgba(255, 255, 255, 0.08); transform: translateY(-1px); border-color: rgba(255, 255, 255, 0.14); }
+
+.caw-icon-box { width: 48px; height: 48px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; }
+.caw-img { width: 48px; height: 48px; object-fit: contain; border-radius: 8px; }
+.caw-fallback-icon { width: 48px; height: 48px; border-radius: 8px; background: #2b313a; color: #e1e4e8; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: bold; }
+
+.caw-label { font-size: 11px; font-weight: 600; line-height: 1.25; margin-bottom: 5px; max-width: 86px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caw-tile-status { font-size: 9px; }
+.caw-msg-empty { text-align: center; padding: 22px 14px; color: #8a9490; font-size: 12px; }
+.caw-msg-empty a { color: #2ea44f; font-weight: 600; }
+</style>
+
+<div id="caw-dashboard-widget" class="caw-dash-box">
+<?php if (!$widget_enabled): ?>
+  <div class="caw-msg-empty">
+    <span>CA Workshop dashboard widget is disabled in <a href="/Utilities/CAWorkshop">Settings</a>.</span>
+  </div>
+<?php elseif (!$widget || empty($widget['connected'])): ?>
+  <div class="caw-msg-empty">
+    <span>No repository connected. Open <a href="/Utilities/CAWorkshop">CA Workshop</a> to connect a repository.</span>
+  </div>
+<?php else: ?>
+  <div class="caw-dash-top">
+    <div class="caw-dash-stats">
+      <span class="caw-badge caw-badge-pending"><?=intval($widget['pending_count'] ?? 0)?> Pending</span>
+      <span class="caw-badge caw-badge-approved"><?=intval($widget['approved_count'] ?? 0)?> Approved</span>
+    </div>
+    <a href="/Utilities/CAWorkshop" style="font-size:11px; color:#2ea44f; text-decoration:none;">Open Workshop ↗</a>
+  </div>
+  <div class="caw-app-grid">
+    <?php foreach (($widget['apps'] ?? []) as $app):
+      $name = htmlspecialchars($app['name'] ?? 'App');
+      $status = $app['status'] ?? 'Draft';
+      $badge_cls = 'caw-badge-draft';
+      if (in_array($status, ['Submitted', 'In review'])) $badge_cls = 'caw-badge-pending';
+      elseif ($status === 'Changes requested') $badge_cls = 'caw-badge-changes';
+      elseif (in_array($status, ['Approved', 'Published'])) $badge_cls = 'caw-badge-approved';
+    ?>
+      <a href="/Utilities/CAWorkshop" class="caw-app-tile" title="<?=$name?> · <?=$status?>">
+        <div class="caw-icon-box">
+          <?php if (!empty($app['icon_data'])): ?>
+            <img class="caw-img" src="<?=$app['icon_data']?>" alt="">
+          <?php elseif (!empty($app['icon_url'])): ?>
+            <img class="caw-img" src="<?=htmlspecialchars($app['icon_url'])?>" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+            <div class="caw-fallback-icon" style="display:none;"><?=htmlspecialchars(strtoupper(substr($name, 0, 2)))?></div>
+          <?php else: ?>
+            <div class="caw-fallback-icon"><?=htmlspecialchars(strtoupper(substr($name, 0, 2)))?></div>
+          <?php endif; ?>
+        </div>
+        <div class="caw-label"><?=$name?></div>
+        <span class="caw-badge <?=$badge_cls?> caw-tile-status"><?=htmlspecialchars($status)?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+<?php endif; ?>
+</div>
+
+<script>
+$(function() {
+  function updateCAWorkshopTile() {
+    $.ajax({
+      url: '/plugins/ca-workshop/api.php?path=/api/dashboard/widget',
+      headers: { 'X-CA-Workshop': '1' },
+      dataType: 'json',
+      timeout: 3000,
+      success: function(data) {
+        if (!data) return;
+        var box = $('#caw-dashboard-widget');
+        if (!data.enabled) {
+          box.html('<div class="caw-msg-empty">CA Workshop dashboard widget is disabled in <a href="/Utilities/CAWorkshop">Settings</a>.</div>');
+          return;
+        }
+        if (!data.connected) {
+          box.html('<div class="caw-msg-empty">No repository connected. Open <a href="/Utilities/CAWorkshop">CA Workshop</a> to connect a repository.</div>');
+          return;
+        }
+        var html = '<div class="caw-dash-top"><div class="caw-dash-stats">' +
+          '<span class="caw-badge caw-badge-pending">' + (data.pending_count || 0) + ' Pending</span>' +
+          '<span class="caw-badge caw-badge-approved">' + (data.approved_count || 0) + ' Approved</span>' +
+          '</div><a href="/Utilities/CAWorkshop" style="font-size:11px; color:#2ea44f; text-decoration:none;">Open Workshop ↗</a></div><div class="caw-app-grid">';
+        (data.apps || []).forEach(function(app) {
+          var status = app.status || 'Draft';
+          var badgeCls = 'caw-badge-draft';
+          if (status === 'Submitted' || status === 'In review') badgeCls = 'caw-badge-pending';
+          else if (status === 'Changes requested') badgeCls = 'caw-badge-changes';
+          else if (status === 'Approved' || status === 'Published') badgeCls = 'caw-badge-approved';
+          var name = $('<div>').text(app.name || 'App').html();
+          var icon = '';
+          if (app.icon_data) {
+            icon = '<img class="caw-img" src="' + app.icon_data + '" alt="">';
+          } else if (app.icon_url) {
+            icon = '<img class="caw-img" src="' + $('<div>').text(app.icon_url).html() + '" alt="" onerror="this.style.display=\'none\';$(this).next().show();"><div class="caw-fallback-icon" style="display:none;">' + name.slice(0, 2).toUpperCase() + '</div>';
+          } else {
+            icon = '<div class="caw-fallback-icon">' + name.slice(0, 2).toUpperCase() + '</div>';
+          }
+          html += '<a href="/Utilities/CAWorkshop" class="caw-app-tile" title="' + name + ' · ' + status + '">' +
+            '<div class="caw-icon-box">' + icon + '</div>' +
+            '<div class="caw-label">' + name + '</div>' +
+            '<span class="caw-badge ' + badgeCls + ' caw-tile-status">' + status + '</span></a>';
+        });
+        html += '</div>';
+        box.html(html);
+      }
+    });
+  }
+  setInterval(updateCAWorkshopTile, 30000);
+});
+</script>

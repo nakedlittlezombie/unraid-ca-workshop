@@ -52,6 +52,14 @@ The catalog browser uses public CA web endpoints that are not documented as a st
 
 The **CA archive** tool indexes and previews files from the Unraid Community Applications `.txz` package without running its PHP plugin code. On first use, CA Workshop checks the official [`unraid/community.applications` archive folder](https://github.com/unraid/community.applications/tree/master/archive) and downloads the latest dated x86_64 package automatically. Use **Check for updates** to compare the local copy with GitHub; if a newer build is available, choose **Download update**. Downloads are saved locally, checked against GitHub's published file hash and size, and validated as a TXZ archive before being activated. The archive is used as a reference for the CA Store's organization and workflow; actual listings and install templates are fetched from the live public CA catalog endpoints. CA Workshop previews selected archive files and does not execute or extract the package.
 
+### Run CA Workshop as an Unraid plugin
+
+The `unraid/` folder packages CA Workshop for an Unraid host. The generated plugin installs the app under `/usr/local/emhttp/plugins/ca-workshop`, starts the Python service on `127.0.0.1:8765`, and adds a **Utilities → CA Workshop** page. Unraid's web server proxies API calls to the loopback service, so the Python server is not exposed to the LAN.
+
+When installed on Unraid, CA Workshop detects the host and switches to Unraid mode: Docker uses `/var/run/docker.sock`, plugin actions call Unraid's own plugin manager, and Community Applications is detected at its standard plugin path. CA Store plugin entries then offer **Install plugin** after confirmation. An optional Unraid Dashboard widget displays your pending approvals and approved apps as icons with statuses below. Saved settings live in `/boot/config/plugins/ca-workshop` so they survive reboots.
+
+Build the plugin with `python3 scripts/build_unraid_plugin.py --version <version> --plugin-url <public-url>`. See [`unraid/README.md`](unraid/README.md) for requirements, install/uninstall steps, and security notes. The host needs Python 3; install it with a package such as NerdTools if necessary.
+
 ### Connect an Unraid server
 
 From the Submissions page, authorize an Unraid server to inspect its system and existing Docker containers. The app requests `system:read`, `docker:read`, `docker:update`, and `docker:delete`. Depending on the server version and granted permissions, controls include starting, stopping, restarting, updating, and removing existing containers.
@@ -65,7 +73,8 @@ The server's authorization screen can use its configured sign-in, including Unra
 - Docker CLI and a reachable Docker daemon for local template installation.
 - Git for working with local repositories and GitHub clones.
 - A GitHub account and personal access token for repository bootstrap and HTTPS publishing. SSH remotes can use the local SSH agent instead.
-- An Unraid server only if you use server inspection and container controls.
+- An Unraid server only if you use server inspection and container controls, or install the Unraid plugin package.
+- Python 3 on the Unraid host when CA Workshop is installed as an Unraid plugin.
 - `xmllint` (optional; enables XSD checks when the connected repository includes `templates/template_schema.xsd`).
 - An internet connection on first use and when checking for package updates.
 - PyYAML, installed from `requirements.txt` for Compose YAML parsing.
@@ -102,9 +111,9 @@ Repository preflight runs the checks from the adapted [`validate_app_config.py`]
 
 ## Local data and credentials
 
-The app stores its selected repository and local activity in `.ca-workshop-state.json` in the project folder. The Unraid API key is stored separately in `.ca-workshop-unraid.json` with owner-only file permissions. The downloaded package and its version record are also stored locally. These local files are ignored by Git. Disconnecting the server removes the saved API key file.
+The app stores its selected repository and local activity in `.ca-workshop-state.json` in the project folder. The Unraid API key is stored separately in `.ca-workshop-unraid.json` with owner-only file permissions. The downloaded package and its version record are also stored locally. These local files are ignored by Git. Disconnecting the server removes the saved API key file. The Unraid plugin sets `CA_WORKSHOP_STATE_DIR` and `CA_WORKSHOP_CONFIG_DIR` to `/boot/config/plugins/ca-workshop` so this data survives reboots.
 
-GitHub tokens are saved under `~/.config/ca-workshop/github.json` with owner-only file permissions, outside the connected repository. They are never shown again in the interface or included in Git history. Remove a token from **Settings** or revoke it through GitHub when it is no longer needed. Unraid API keys remain in a separate owner-only local settings file.
+GitHub tokens are saved under `~/.config/ca-workshop/github.json` with owner-only file permissions, outside the connected repository. On the Unraid plugin they live in `/boot/config/plugins/ca-workshop` instead, where the FAT32 flash drive may not enforce those permissions. They are never shown again in the interface or included in Git history. Remove a token from **Settings** or revoke it through GitHub when it is no longer needed. Unraid API keys remain in a separate local settings file, and local AI endpoint settings are stored in `ai.json` beside them.
 
 ## Docker and template safety
 
@@ -130,6 +139,8 @@ The Unraid connection can update or remove existing containers when you grant th
 ├── index.html             # App pages and forms
 ├── style.css              # CA-inspired theme and layout
 ├── server.py              # Local HTTP service and adapters
+├── unraid/                # Unraid plugin page, proxy, service script, and notes
+├── scripts/               # Unraid .plg build tooling
 ├── fixtures/              # Demo repository template
 └── tests/                 # Automated checks
 ```

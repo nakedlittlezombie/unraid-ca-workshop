@@ -24,6 +24,15 @@ from xml.sax.saxutils import escape as xml_escape, quoteattr
 from automation.template_validation.validate_app_config import validate_template_content, validate_template_xsd
 
 ROOT = Path(__file__).resolve().parent
+CONFIG_DIR = Path(os.environ["CA_WORKSHOP_CONFIG_DIR"]).expanduser() if os.environ.get("CA_WORKSHOP_CONFIG_DIR") else Path.home() / ".config" / "ca-workshop"
+STATE_DIR = Path(os.environ["CA_WORKSHOP_STATE_DIR"]).expanduser() if os.environ.get("CA_WORKSHOP_STATE_DIR") else ROOT
+UNRAID_VERSION_FILE = Path("/etc/unraid-version")
+UNRAID_EMHTTP_ROOT = Path("/usr/local/emhttp")
+UNRAID_PLUGIN_MANAGER = UNRAID_EMHTTP_ROOT / "plugins" / "dynamix.plugin.manager" / "scripts" / "plugin"
+UNRAID_CA_DIR = UNRAID_EMHTTP_ROOT / "plugins" / "community.applications"
+UNRAID_TEMPLATES_USER = Path("/boot/config/plugins/dockerMan/templates-user")
+UNRAID_PLUGIN_STATE = Path("/var/log/plugins")
+UNRAID_DOCKER_SOCKET = Path("/var/run/docker.sock")
 CA_ORIGIN = "https://ca.unraid.net"
 GITHUB_API = "https://api.github.com"
 ARCHIVE = ROOT / ".ca-workshop-package.txz"
@@ -46,11 +55,14 @@ try:
 except (OSError, ValueError, TypeError, AttributeError):
     pass
 if not ARCHIVE.is_file() and LEGACY_ARCHIVE.is_file(): ARCHIVE = LEGACY_ARCHIVE
-STATE_FILE = ROOT / ".ca-workshop-state.json"
-UNRAID_SECRET_FILE = ROOT / ".ca-workshop-unraid.json"
-GITHUB_SECRET_FILE = Path.home() / ".config" / "ca-workshop" / "github.json"
+STATE_FILE = STATE_DIR / ".ca-workshop-state.json"
+UNRAID_SECRET_FILE = STATE_DIR / ".ca-workshop-unraid.json"
+GITHUB_SECRET_FILE = CONFIG_DIR / "github.json"
+AI_SECRET_FILE = CONFIG_DIR / "ai.json"
+AI_REQUEST_BYTES = 4 * 1024 * 1024
 INSTALL_JOBS = {}
 INSTALL_JOBS_LOCK = threading.Lock()
+saved_state = {}
 try:
     saved_state = json.loads(STATE_FILE.read_text())
     configured_repo = Path(saved_state.get("repository", "")).resolve()
@@ -59,12 +71,17 @@ try:
     PENDING_UNRAID_STATE = saved_state.get("unraid_pending_state", "")
     PENDING_UNRAID_HOST = saved_state.get("unraid_pending_host", "")
     REPO = configured_repo if configured_repo.is_dir() else None
+    SUBMISSION_STATUSES = saved_state.get("submissions", {})
+    if not isinstance(SUBMISSION_STATUSES, dict): SUBMISSION_STATUSES = {}
+    DASHBOARD_WIDGET_ENABLED = bool(saved_state.get("dashboard_widget_enabled", True))
 except (OSError, ValueError, TypeError):
     REPO = None
     HISTORY = []
     UNRAID_HOST = ""
     PENDING_UNRAID_STATE = ""
     PENDING_UNRAID_HOST = ""
+    SUBMISSION_STATUSES = {}
+    DASHBOARD_WIDGET_ENABLED = True
 
 try:
     UNRAID_API_KEY = json.loads(UNRAID_SECRET_FILE.read_text()).get("api_key", "")
@@ -78,9 +95,30 @@ try:
 except (OSError, ValueError, TypeError, AttributeError):
     GITHUB_TOKEN = ""
     GITHUB_LOGIN = ""
+try:
+    ai_secret = json.loads(AI_SECRET_FILE.read_text())
+    AI_BASE_URL = str(ai_secret.get("base_url", ""))
+    AI_API_KEY = str(ai_secret.get("api_key", ""))
+    AI_MODEL = str(ai_secret.get("model", ""))
+    AI_MODELS = [str(item) for item in ai_secret.get("models", []) if isinstance(item, (str, int, float))][:500]
+    os.chmod(AI_SECRET_FILE, 0o600)
+except (OSError, ValueError, TypeError, AttributeError):
+    AI_BASE_URL = ""
+    AI_API_KEY = ""
+    AI_MODEL = ""
+    AI_MODELS = []
 
 def save_state():
-    STATE_FILE.write_text(json.dumps({"repository": str(REPO) if REPO else "", "history": HISTORY[-50:], "unraid_host": UNRAID_HOST, "unraid_pending_state": PENDING_UNRAID_STATE, "unraid_pending_host": PENDING_UNRAID_HOST, "common_install_vars": saved_state.get("common_install_vars",{})}, indent=2))
+    STATE_FILE.write_text(json.dumps({
+        "repository": str(REPO) if REPO else "",
+        "history": HISTORY[-50:],
+        "unraid_host": UNRAID_HOST,
+        "unraid_pending_state": PENDING_UNRAID_STATE,
+        "unraid_pending_host": PENDING_UNRAID_HOST,
+        "common_install_vars": saved_state.get("common_install_vars", {}),
+        "submissions": SUBMISSION_STATUSES,
+        "dashboard_widget_enabled": DASHBOARD_WIDGET_ENABLED,
+    }, indent=2))
 
 def save_unraid_key(api_key):
     UNRAID_SECRET_FILE.write_text(json.dumps({"api_key": api_key}))
@@ -97,6 +135,112 @@ def save_github_secret(token="", login=""):
     os.chmod(GITHUB_SECRET_FILE.parent, 0o700)
     GITHUB_SECRET_FILE.write_text(json.dumps({"token":token,"login":login}))
     os.chmod(GITHUB_SECRET_FILE, 0o600)
+
+def save_ai_config(base_url="", api_key="", model="", models=None):
+    global AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_MODELS
+    AI_BASE_URL, AI_API_KEY, AI_MODEL = base_url, api_key, model
+    AI_MODELS = [str(item) for item in (models or [])][:500]
+    if not base_url:
+        try: AI_SECRET_FILE.unlink(missing_ok=True)
+        except OSError: pass
+        return
+    AI_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(AI_SECRET_FILE.parent, 0o700)
+    AI_SECRET_FILE.write_text(json.dumps({"base_url":base_url,"api_key":api_key,"model":model,"models":AI_MODELS}))
+    os.chmod(AI_SECRET_FILE, 0o600)
+
+def ai_config_payload():
+    return {"configured":bool(AI_BASE_URL and AI_MODEL),"base_url":AI_BASE_URL,"model":AI_MODEL,"models":AI_MODELS,"api_key_set":bool(AI_API_KEY)}
+
+def ai_normalize_base_url(value):
+    value = str(value or "").strip()
+    if not value: raise ValueError("Enter the OpenAI-compatible API base URL.")
+    if "://" not in value: value = "http://" + value
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Enter an http:// or https:// base URL for the AI endpoint.")
+    if parsed.username or parsed.password:
+        raise ValueError("Put credentials in the API key field, not in the URL.")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Use a base URL without query parameters or fragments.")
+    path = parsed.path.rstrip("/")
+    for suffix in ("/chat/completions", "/models"):
+        if path.endswith(suffix): path = path[:-len(suffix)].rstrip("/")
+    if not re.search(r"/v\d+(?:\.\d+)?$", path): path += "/v1"
+    return parsed._replace(path=path, params="", query="", fragment="").geturl().rstrip("/")
+
+def ai_api_error(exc, api_key=""):
+    detail = ""
+    if isinstance(exc, urllib.error.HTTPError):
+        try: detail = exc.read(20_000).decode("utf-8", "replace")
+        except OSError: pass
+        try: detail = json.loads(detail).get("error", {}).get("message", "") or detail
+        except (ValueError, AttributeError): pass
+        detail = str(detail).strip()
+        if exc.code == 401: return "The AI endpoint rejected the API key."
+        if exc.code == 404: return "The AI endpoint did not find that API path. Check the base URL (it usually ends in /v1)."
+        return f"AI endpoint returned HTTP {exc.code}" + (f": {detail[:300]}" if detail else ".")
+    if isinstance(exc, urllib.error.URLError):
+        detail = str(exc.reason or exc)
+        return f"Could not reach the AI endpoint: {detail}"
+    return f"AI request failed: {str(exc) or exc.__class__.__name__}"
+
+def ai_request(base_url, api_key, path, payload=None, timeout=60):
+    request = urllib.request.Request(base_url.rstrip("/") + path, data=json.dumps(payload).encode() if payload is not None else None, method="POST" if payload is not None else "GET", headers={"Accept":"application/json","Content-Type":"application/json",**({"Authorization":f"Bearer {api_key}"} if api_key else {})})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(AI_REQUEST_BYTES + 1)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ValueError(ai_api_error(exc, api_key)) from exc
+    if len(body) > AI_REQUEST_BYTES: raise ValueError("The AI endpoint returned an oversized response.")
+    try: return json.loads(body.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        raise ValueError("The AI endpoint returned a response that was not JSON. Check that the base URL points to an OpenAI-compatible API.")
+
+def ai_model_ids(source):
+    items = source.get("data") if isinstance(source, dict) else None
+    if not isinstance(items, list): items = source.get("models") if isinstance(source, dict) else None
+    if not isinstance(items, list): items = []
+    models = []
+    for item in items:
+        name = item if isinstance(item, str) else (item.get("id") or item.get("name") or item.get("model") if isinstance(item, dict) else "")
+        name = str(name or "").strip()
+        if name and len(name) <= 200 and name not in models: models.append(name)
+    return sorted(models)[:500]
+
+def ai_fetch_models(base_url, api_key):
+    return ai_model_ids(ai_request(base_url, api_key, "/models", timeout=25))
+
+def ai_generate_text(field, label, context, current_value, max_chars):
+    if not AI_BASE_URL or not AI_MODEL: raise ValueError("Connect a local AI endpoint in Settings first.")
+    max_chars = max(20, min(4000, int(max_chars or 600)))
+    instruction = (
+        "You write text for Unraid Community Applications Docker templates. "
+        "Return only the replacement text for the requested field, with no Markdown fences, labels, or surrounding quotation marks. "
+        "Do not invent URLs, Docker images, version numbers, or facts that are not in the supplied context. "
+        "If details are missing, write a short generic description that still fits the field. Match the requested length and tone."
+    )
+    prompt = (
+        f"Field: {label or field}\n"
+        f"Application context: {context or 'No additional context supplied.'}\n"
+        f"Current text: {current_value or '(empty)'}\n"
+        f"Maximum characters: {max_chars}\n\n"
+        "Write the best replacement text for this field. If current text is present, improve it while keeping its accurate facts."
+    )
+    source = ai_request(AI_BASE_URL, AI_API_KEY, "/chat/completions", {"model":AI_MODEL,"messages":[{"role":"system","content":instruction},{"role":"user","content":prompt}],"temperature":0.4,"max_tokens":min(900,max(120,max_chars//3)),"stream":False}, timeout=90)
+    choices = source.get("choices") if isinstance(source, dict) else None
+    message = choices[0].get("message", {}) if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    text = message.get("content") if isinstance(message, dict) else ""
+    if not text and isinstance(choices, list) and choices and isinstance(choices[0], dict): text = choices[0].get("text", "")
+    if isinstance(text, list): text = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in text)
+    text = str(text or "").strip()
+    text = re.sub(r"^```[A-Za-z0-9_-]*\s*|\s*```$", "", text).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'": text = text[1:-1].strip()
+    if not text: raise ValueError("The AI model returned no text. Try another model.")
+    if len(text) > max_chars:
+        clipped = text[:max_chars]
+        text = clipped.rsplit(" ", 1)[0].rstrip(" ,.;:") if " " in clipped else clipped
+    return text
 
 def git_run(*args, timeout=30, env=None):
     if not REPO or not REPO.is_dir(): raise ValueError("Connect a local Git repository first.")
@@ -428,9 +572,157 @@ def icon_tool_data(repo):
             except (ET.ParseError,OSError): continue
     return {"connected":True,"templates":templates,"images":image_files,"placeholder":"images/placeholder-icon.png","has_placeholder":(repo/"images"/"placeholder-icon.png").is_file()}
 
+def dashboard_widget_data():
+    if not REPO or not REPO.is_dir():
+        return {
+            "enabled": DASHBOARD_WIDGET_ENABLED,
+            "connected": False,
+            "repo_name": "",
+            "pending_count": 0,
+            "approved_count": 0,
+            "apps": []
+        }
+    apps = []
+    xml_list = xml_files(REPO)
+    pending_statuses = {"Submitted", "In review", "Changes requested"}
+    approved_statuses = {"Approved", "Published"}
+    pending_count = 0
+    approved_count = 0
+    for path in sorted(xml_list):
+        if path.name in ("ca_profile.xml", "template_schema.xsd"):
+            continue
+        rel = str(path.relative_to(REPO)).replace(os.sep, "/")
+        if not (rel.startswith("templates/") or rel.startswith("plugins/")):
+            continue
+        try:
+            root = ET.parse(path).getroot()
+        except (ET.ParseError, OSError):
+            continue
+        kind = "docker" if root.tag == "Container" else "plugin" if root.tag == "Plugin" else "unknown"
+        name = (root.findtext("Name") or path.stem).strip()
+        status = SUBMISSION_STATUSES.get(rel, "Draft")
+        if status in pending_statuses:
+            pending_count += 1
+        elif status in approved_statuses:
+            approved_count += 1
+        icon_url = (root.findtext("Icon") or "").strip()
+        icon_slug = re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-")
+        local_candidates = [
+            REPO / "images" / f"{icon_slug}-icon.png",
+            REPO / "images" / f"{path.stem}-icon.png",
+            REPO / "icon.png",
+            REPO / "images" / "placeholder-icon.png",
+        ]
+        local_icon = next((p for p in local_candidates if p.is_file()), None)
+        icon_data = ""
+        if local_icon and local_icon.stat().st_size <= 2_000_000:
+            try:
+                b = local_icon.read_bytes()
+                if b[:8] == b"\x89PNG\r\n\x1a\n":
+                    icon_data = "data:image/png;base64," + base64.b64encode(b).decode("ascii")
+            except OSError:
+                pass
+        apps.append({
+            "name": name,
+            "file": rel,
+            "kind": kind,
+            "status": status,
+            "icon_url": icon_url,
+            "icon_data": icon_data,
+        })
+    return {
+        "enabled": DASHBOARD_WIDGET_ENABLED,
+        "connected": True,
+        "repo_name": REPO.name,
+        "pending_count": pending_count,
+        "approved_count": approved_count,
+        "apps": apps
+    }
+
+def running_on_unraid():
+    return os.environ.get("CA_WORKSHOP_UNRAID") == "1" or UNRAID_VERSION_FILE.is_file() or UNRAID_CA_DIR.is_dir()
+
+def unraid_version():
+    try:
+        for line in UNRAID_VERSION_FILE.read_text().splitlines():
+            if line.strip().startswith("version="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+def docker_environment():
+    env = os.environ.copy()
+    if running_on_unraid() and not env.get("DOCKER_HOST") and UNRAID_DOCKER_SOCKET.exists():
+        env["DOCKER_HOST"] = f"unix://{UNRAID_DOCKER_SOCKET}"
+    return env
+
+def runtime_payload():
+    unraid = running_on_unraid()
+    d = docker("version", "--format", "{{.Server.Version}}")
+    plugins = unraid_plugin_files() if unraid else []
+    return {
+        "unraid": unraid,
+        "version": unraid_version() if unraid else "",
+        "platform": "Unraid" if unraid else "Workstation",
+        "docker": {
+            "available": bool(d and d.returncode == 0),
+            "version": d.stdout.strip() if d and d.returncode == 0 else "",
+            "mode": "Unraid Docker socket" if unraid else "Local Docker CLI",
+            "host": os.environ.get("DOCKER_HOST") or (f"unix://{UNRAID_DOCKER_SOCKET}" if unraid and UNRAID_DOCKER_SOCKET.exists() else "default"),
+        },
+        "plugins": {
+            "manager": str(UNRAID_PLUGIN_MANAGER),
+            "available": UNRAID_PLUGIN_MANAGER.is_file(),
+            "count": len(plugins),
+        },
+        "ca": {
+            "active": UNRAID_CA_DIR.is_dir(),
+            "path": str(UNRAID_CA_DIR),
+        },
+        "templates_user": {"path": str(UNRAID_TEMPLATES_USER), "active": UNRAID_TEMPLATES_USER.is_dir()},
+    }
+
+def unraid_plugin_files():
+    found = {}
+    for base in (UNRAID_PLUGIN_STATE, Path("/boot/config/plugins")):
+        try:
+            entries = list(base.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.suffix.lower() != ".plg" or not entry.name.endswith(".plg"):
+                continue
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.plg", entry.name):
+                found.setdefault(entry.name, {"name": entry.name, "path": str(entry), "installed": base == UNRAID_PLUGIN_STATE})
+    return sorted(found.values(), key=lambda item: item["name"].lower())
+
+def unraid_plugin_action(action, target):
+    if not running_on_unraid(): raise ValueError("Plugin manager actions are only available when CA Workshop runs on Unraid.")
+    if not UNRAID_PLUGIN_MANAGER.is_file(): raise ValueError("The Unraid plugin manager was not found on this server.")
+    if action == "install":
+        if not re.fullmatch(r"https://[^\s<>\"']+\.plg(?:\?[^\s<>\"']*)?", target):
+            raise ValueError("Install plugins from an https .plg URL.")
+    elif action in ("remove", "update"):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.plg", target):
+            raise ValueError("Choose an installed .plg plugin by filename.")
+        installed = {item["name"] for item in unraid_plugin_files() if item["installed"]}
+        if target not in installed:
+            raise ValueError("That plugin is not installed on this Unraid server.")
+    else:
+        raise ValueError("Unsupported plugin action.")
+    try:
+        result = subprocess.run([str(UNRAID_PLUGIN_MANAGER), action, target], capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise ValueError("The Unraid plugin manager timed out.")
+    output = (result.stdout + "\n" + result.stderr).strip()[-4000:]
+    if result.returncode:
+        raise ValueError(output or f"The Unraid plugin manager could not {action} that plugin.")
+    return output
+
 def docker(*args, timeout=20):
     try:
-        return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, env=docker_environment())
     except FileNotFoundError:
         return None
     except subprocess.TimeoutExpired:
@@ -444,7 +736,7 @@ def update_install_job(job_id, **updates):
 def run_install_job(job_id, args, app_name, image, container_name, rel, template_url):
     update_install_job(job_id,status="running",stage="Connecting to Docker…")
     try:
-        process=subprocess.Popen(["docker",*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+        process=subprocess.Popen(["docker",*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,env=docker_environment())
         with INSTALL_JOBS_LOCK:
             INSTALL_JOBS[job_id]["stage"]="Pulling image and creating container…"
         for line in process.stdout:
@@ -730,7 +1022,11 @@ class Handler(BaseHTTPRequestHandler):
         global REPO
         if self.path=="/api/settings":
             sync=repo_sync_status() if REPO else {"connected":False,"synced":False,"error":"Connect a Git repository first."}
-            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync}); return
+            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync,"dashboard_widget":{"enabled":DASHBOARD_WIDGET_ENABLED}}); return
+        if self.path=="/api/settings/dashboard-widget": self.send_json({"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/submissions/status": self.send_json({"statuses":SUBMISSION_STATUSES,"widget":dashboard_widget_data()}); return
+        if self.path=="/api/dashboard/widget": self.send_json(dashboard_widget_data()); return
+        if self.path=="/api/settings/ai": self.send_json(ai_config_payload()); return
         if self.path=="/api/settings/vars":
             if self.command=="GET":
                 self.send_json({"vars": saved_state.get("common_install_vars",{})}); return
@@ -756,6 +1052,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=="/api/status":
             d=docker("version","--format","{{.Server.Version}}")
             self.send_json({"repo":inspect_repo(REPO),"docker":{"available":bool(d and d.returncode==0),"version":d.stdout.strip() if d and d.returncode==0 else "","error":d.stderr.strip() if d and d.returncode else "" if d and d.returncode==0 else "Docker daemon unavailable"}}); return
+        if self.path=="/api/runtime": self.send_json(runtime_payload()); return
+        if self.path=="/api/unraid/plugins": self.send_json({"unraid":running_on_unraid(),"plugins":unraid_plugin_files() if running_on_unraid() else []}); return
         if self.path.startswith("/api/ca/catalog"):
             result=ca_catalog(); query=parse_qs(urlparse(self.path).query); search=query.get("q",[""])[0].strip().lower()
             if search and result.get("connected"):
@@ -807,7 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
                 if app_type in ("docker","plugin"): params["type"]=app_type
                 elif app_type!="all": raise ValueError("Choose Docker apps, plugins, or all entries.")
                 source=ca_json("/api/search",params)
-                fields=("objectID","Name","appType","Overview","overviewPreview","Icon","TemplateURL","InstallTemplateURL","Project","Support","Repo","downloads","CategoryList","categoryPaths","MinVer","MaxVer","pluginVersion","beta","deprecated","isOfficial","DateAdded","LastUpdate","dateAdded","lastUpdate","githubStars","GitHubStars","dockerHubStars","DockerHubStars")
+                fields=("objectID","Name","appType","Overview","overviewPreview","Icon","TemplateURL","InstallTemplateURL","PluginURL","Project","Support","Repo","downloads","CategoryList","categoryPaths","MinVer","MaxVer","pluginVersion","beta","deprecated","isOfficial","DateAdded","LastUpdate","dateAdded","lastUpdate","githubStars","GitHubStars","dockerHubStars","DockerHubStars")
                 hits=[{key:item.get(key) for key in fields if key in item} for item in source.get("hits",[]) if isinstance(item,dict) and item.get("Name")]
                 self.send_json({"hits":hits,"total":source.get("nbHits",0),"page":page,"limit":limit})
             except (ValueError,TypeError) as exc:self.send_json({"error":str(exc)},400)
@@ -888,6 +1186,65 @@ class Handler(BaseHTTPRequestHandler):
             saved_state["common_install_vars"]=vars_data
             save_state()
             self.send_json({"ok":True,"vars":vars_data}); return
+        if self.path=="/api/settings/dashboard-widget":
+            global DASHBOARD_WIDGET_ENABLED
+            DASHBOARD_WIDGET_ENABLED=bool(data.get("enabled",True))
+            save_state()
+            record_activity("Dashboard widget "+("enabled" if DASHBOARD_WIDGET_ENABLED else "disabled"),"Unraid Dashboard tile setting updated")
+            self.send_json({"ok":True,"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/submissions/status":
+            target_file=str(data.get("file","")).strip()
+            status=str(data.get("status","")).strip()
+            if target_file and status:
+                SUBMISSION_STATUSES[target_file]=status
+            elif isinstance(data.get("statuses"),dict):
+                for k,v in data["statuses"].items():
+                    if isinstance(k,str) and isinstance(v,str): SUBMISSION_STATUSES[k]=v
+            save_state()
+            self.send_json({"ok":True,"statuses":SUBMISSION_STATUSES}); return
+        if self.path in ("/api/unraid/plugins/install","/api/unraid/plugins/remove"):
+            action="install" if self.path.endswith("/install") else "remove"
+            target=str(data.get("url" if action=="install" else "plugin","")).strip()
+            if data.get("confirmed") is not True:
+                self.send_json({"error":"Confirm this Unraid plugin action first."},400); return
+            try:
+                output=unraid_plugin_action(action,target)
+                record_activity("Unraid plugin "+("installed" if action=="install" else "removed"),target)
+                self.send_json({"ok":True,"action":action,"target":target,"output":output,"plugins":unraid_plugin_files()})
+            except (ValueError,OSError) as exc:self.send_json({"error":str(exc)},400)
+            return
+        if self.path=="/api/settings/ai/models":
+            try:
+                base_url=ai_normalize_base_url(data.get("base_url",""))
+                supplied_key=str(data.get("api_key","") or "").strip()
+                api_key=supplied_key or (AI_API_KEY if base_url==AI_BASE_URL else "")
+                models=ai_fetch_models(base_url,api_key)
+                if not models: raise ValueError("The AI endpoint returned no models. Load a model in that server or check the API path.")
+                self.send_json({"ok":True,"base_url":base_url,"models":models})
+            except (ValueError,TypeError) as exc:self.send_json({"error":str(exc)},400)
+            return
+        if self.path=="/api/settings/ai":
+            try:
+                base_url=ai_normalize_base_url(data.get("base_url",""))
+                supplied_key=str(data.get("api_key","") or "").strip()
+                api_key=supplied_key or (AI_API_KEY if base_url==AI_BASE_URL else "")
+                model=str(data.get("model","") or "").strip()
+                models=ai_fetch_models(base_url,api_key)
+                if not models: raise ValueError("The AI endpoint returned no models. Load a model in that server or check the API path.")
+                if not model: model=models[0]
+                if model not in models: raise ValueError("Choose a model returned by the AI endpoint.")
+                save_ai_config(base_url,api_key,model,models); record_activity("Local AI connected",f"{model} · {base_url}")
+                self.send_json({"ok":True,**ai_config_payload()})
+            except (ValueError,TypeError) as exc:self.send_json({"error":str(exc)},400)
+            return
+        if self.path=="/api/settings/ai/remove":
+            save_ai_config(); record_activity("Local AI disconnected","Saved endpoint settings removed"); self.send_json({"ok":True}); return
+        if self.path=="/api/ai/generate":
+            try:
+                text=ai_generate_text(str(data.get("field",""))[:120],str(data.get("label",""))[:200],str(data.get("context",""))[:4000],str(data.get("current_value",""))[:4000],data.get("max_chars",600))
+                self.send_json({"ok":True,"text":text,"model":AI_MODEL})
+            except (ValueError,TypeError) as exc:self.send_json({"error":str(exc)},400)
+            return
         if self.path=="/api/settings/github":
             token=str(data.get("token","")).strip()
             if not 20<=len(token)<=512 or not all(32<=ord(char)<127 for char in token): self.send_json({"error":"Enter a valid GitHub personal access token."},400); return
@@ -1325,7 +1682,8 @@ class Handler(BaseHTTPRequestHandler):
                             if value:
                                 if not value.isdigit() or not 1<=int(value)<=65535: raise ValueError(f"Host port for {label} must be between 1 and 65535.")
                                 protocol="udp" if cfg.get("Mode", "tcp").lower()=="udp" else "tcp"
-                                args += ["-p",f"127.0.0.1:{int(value)}:{int(target)}/{protocol}"]
+                                host_prefix="" if running_on_unraid() else "127.0.0.1:"
+                                args += ["-p",f"{host_prefix}{int(value)}:{int(target)}/{protocol}"]
                         elif kind=="path":
                             if not target.startswith("/") or ":" in target or target=="/var/run/docker.sock" or ".." in target.split("/"): raise ValueError(f"Unsafe container path target for {label}.")
                             mode="ro" if cfg.get("Mode", "rw").lower()=="ro" else "rw"
@@ -1367,7 +1725,7 @@ class Handler(BaseHTTPRequestHandler):
             args=["run","-d","--name",name,"--label","ca-workshop=true","--restart","no","--memory=1g","--cpus=1","--pids-limit=256"]
             if port:
                 if not re.fullmatch(r"[0-9]{1,5}",port) or not 1<=int(port)<=65535:self.send_json({"error":"Port must be between 1 and 65535."},400);return
-                args += ["-p",f"127.0.0.1:{port}:{port}"]
+                args += ["-p",f"{'' if running_on_unraid() else '127.0.0.1:'}{port}:{port}"]
             args.append(image); d=docker(*args,timeout=600)
             if not d:self.send_json({"error":"Docker CLI is unavailable."},503)
             elif d.returncode:self.send_json({"error":d.stderr.strip()},400)
@@ -1387,6 +1745,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error":"Not found"},404)
 
 if __name__=="__main__":
+    import argparse
+    parser=argparse.ArgumentParser(description="CA Workshop local service")
+    parser.add_argument("--host",default="127.0.0.1",help="Bind address (loopback only)")
+    parser.add_argument("--port",type=int,default=8765,help="HTTP port on the loopback interface")
+    args=parser.parse_args()
+    if args.host not in ("127.0.0.1","::1","localhost"):
+        raise SystemExit("CA Workshop only binds to loopback. Use 127.0.0.1, ::1, or localhost.")
+    if not 1<=args.port<=65535: raise SystemExit("Choose a port between 1 and 65535.")
     if not ARCHIVE.is_file(): start_package_check(download_if_needed=True)
-    print("CA Workshop: http://127.0.0.1:8765")
-    ThreadingHTTPServer(("127.0.0.1",8765),Handler).serve_forever()
+    print(f"CA Workshop: http://{args.host}:{args.port}")
+    ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()
