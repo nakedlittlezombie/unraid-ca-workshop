@@ -57,7 +57,7 @@ if ($widget && array_key_exists('enabled', $widget)) {
 .caw-msg-empty a { color: #2ea44f; font-weight: 600; }
 </style>
 
-<div id="caw-dashboard-widget" class="caw-dash-box">
+<div id="caw-dashboard-widget" class="caw-dash-box" style="display:<?php echo $widget_enabled ? 'block' : 'none'; ?>;">
 <?php if (!$widget_enabled): ?>
   <div class="caw-msg-empty">
     <span>CA Workshop dashboard widget is disabled in <a href="/Utilities/CAWorkshop">Settings</a>.</span>
@@ -114,7 +114,7 @@ $(function() {
         if (!data) return;
         var box = $('#caw-dashboard-widget');
         if (!data.enabled) {
-          box.html('<div class="caw-msg-empty">CA Workshop dashboard widget is disabled in <a href="/Utilities/CAWorkshop">Settings</a>.</div>');
+          box.hide();
           return;
         }
         if (!data.connected) {

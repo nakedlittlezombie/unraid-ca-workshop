@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29t" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29t. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29u" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29u. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -2895,7 +2895,7 @@ if ($widget &amp;&amp; array_key_exists('enabled', $widget)) {
 .caw-msg-empty a { color: #2ea44f; font-weight: 600; }
 &lt;/style&gt;
 
-&lt;div id="caw-dashboard-widget" class="caw-dash-box"&gt;
+&lt;div id="caw-dashboard-widget" class="caw-dash-box" style="display:&lt;?php echo $widget_enabled ? 'block' : 'none'; ?&gt;;"&gt;
 &lt;?php if (!$widget_enabled): ?&gt;
   &lt;div class="caw-msg-empty"&gt;
     &lt;span&gt;CA Workshop dashboard widget is disabled in &lt;a href="/Utilities/CAWorkshop"&gt;Settings&lt;/a&gt;.&lt;/span&gt;
@@ -2952,7 +2952,7 @@ $(function() {
         if (!data) return;
         var box = $('#caw-dashboard-widget');
         if (!data.enabled) {
-          box.html('&lt;div class="caw-msg-empty"&gt;CA Workshop dashboard widget is disabled in &lt;a href="/Utilities/CAWorkshop"&gt;Settings&lt;/a&gt;.&lt;/div&gt;');
+          box.hide();
           return;
         }
         if (!data.connected) {
