@@ -1,6 +1,6 @@
 Menu="UserUtilities"
 Title="CA Workshop"
-Icon="fa-cubes"
+Icon="ca-workshop.png"
 ---
 <?php
 /*

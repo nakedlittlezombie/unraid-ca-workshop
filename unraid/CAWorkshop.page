@@ -1,5 +1,5 @@
 Menu="Utilities:10"
-Icon="fa-cubes"
+Icon="ca-workshop.png"
 Name="CA Workshop"
 Type="xmenu"
 Tabs="false"

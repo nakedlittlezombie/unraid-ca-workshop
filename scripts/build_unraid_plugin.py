@@ -24,6 +24,7 @@ APP_FILES = [
     "app.js",
     "style.css",
     "requirements.txt",
+    "ca-workshop.png",
     "images/ca-workshop-icon.png",
     "automation/template_validation/__init__.py",
     "automation/template_validation/validate_app_config.py",
@@ -103,7 +104,7 @@ def main() -> int:
         f'author="{escape(args.author, {chr(34): "&quot;"})}"',
         f'version="{escape(args.version, {chr(34): "&quot;"})}"',
         'launch="Settings/CAWorkshopSettings"',
-        'icon="/usr/local/emhttp/plugins/ca-workshop/images/ca-workshop-icon.png"',
+        'icon="ca-workshop.png"',
     ]
     if args.plugin_url:
         attributes.append(f'pluginURL="{escape(args.plugin_url, {chr(34): "&quot;"})}"')
@@ -112,6 +113,7 @@ def main() -> int:
 
     run = (
         "/bin/bash -c 'mkdir -p /boot/config/plugins/ca-workshop && "
+        "cp -f /usr/local/emhttp/plugins/ca-workshop/ca-workshop.png /boot/config/plugins/ca-workshop/ca-workshop.png 2>/dev/null; "
         "chmod +x /etc/rc.d/rc.ca-workshop /usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop && "
         "/etc/rc.d/rc.ca-workshop restart'"
     )
@@ -124,6 +126,7 @@ def main() -> int:
         "/etc/rc.d/rc.ca-workshop stop 2>/dev/null\n"
         "rm -f /etc/rc.d/rc.ca-workshop\n"
         "rm -rf /usr/local/emhttp/plugins/ca-workshop\n"
+        "rm -f /boot/config/plugins/ca-workshop/ca-workshop.png\n"
     )
     plg = (
         '<?xml version="1.0" encoding="utf-8"?>\n'

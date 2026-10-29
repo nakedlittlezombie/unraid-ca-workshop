@@ -1185,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
         target=(ROOT / self.path.lstrip("/")).resolve()
         if ROOT not in target.parents and target!=ROOT: self.send_json({"error":"Not found"},404); return
         if not target.is_file(): self.send_json({"error":"Not found"},404); return
-        data=target.read_bytes(); types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8"}; self.send_response(200); self.send_header("Content-Type",types.get(target.suffix,"application/octet-stream")); self.send_header("Content-Length",str(len(data))); self.send_header("Referrer-Policy","no-referrer"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data)
+        data=target.read_bytes(); types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".png":"image/png",".svg":"image/svg+xml",".ico":"image/x-icon",".json":"application/json"}; self.send_response(200); self.send_header("Content-Type",types.get(target.suffix,"application/octet-stream")); self.send_header("Content-Length",str(len(data))); self.send_header("Referrer-Policy","no-referrer"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
         global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN, DASHBOARD_WIDGET_ENABLED, MENU_PLACEMENT
         try: data=self.body()
