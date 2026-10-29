@@ -10,6 +10,30 @@ if (($_SERVER['HTTP_X_CA_WORKSHOP'] ?? '') !== '1') {
     echo json_encode(['error' => 'CA Workshop requests must come from the plugin page.']);
     exit;
 }
+
+if (isset($_GET['get_csrf_token']) || isset($_GET['csrf']) || $path === '/api/auth/csrf' || $path === '/api/csrf-token') {
+    $token = '';
+    global $var;
+    if (isset($var['csrf_token']) && is_string($var['csrf_token']) && $var['csrf_token'] !== '') {
+        $token = $var['csrf_token'];
+    }
+    if ($token === '' && file_exists('/var/local/emhttp/var.ini')) {
+        $ini = @parse_ini_file('/var/local/emhttp/var.ini');
+        if (isset($ini['csrf_token']) && is_string($ini['csrf_token'])) {
+            $token = $ini['csrf_token'];
+        }
+    }
+    if ($token === '' && file_exists('/var/local/emhttp/var.ini')) {
+        $raw = @file_get_contents('/var/local/emhttp/var.ini');
+        if ($raw && preg_match('/csrf_token="([^"]+)"/', $raw, $m)) {
+            $token = $m[1];
+        }
+    }
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store');
+    echo json_encode(['csrf_token' => $token]);
+    exit;
+}
 if ($path === '' || strpos($path, '/api/') !== 0 || strpos($path, '..') !== false || preg_match('/[\r\n]/', $path)) {
     http_response_code(400);
     header('Content-Type: application/json');

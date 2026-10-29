@@ -5,8 +5,22 @@ Type="xmenu"
 Tabs="false"
 ---
 <?php
-$var = @parse_ini_file('/var/local/emhttp/var.ini');
-$csrf_token = $var['csrf_token'] ?? '';
+$csrf_token = '';
+if (isset($var['csrf_token']) && is_string($var['csrf_token']) && $var['csrf_token'] !== '') {
+    $csrf_token = $var['csrf_token'];
+}
+if ($csrf_token === '' && file_exists('/var/local/emhttp/var.ini')) {
+    $ini = @parse_ini_file('/var/local/emhttp/var.ini');
+    if (isset($ini['csrf_token']) && is_string($ini['csrf_token'])) {
+        $csrf_token = $ini['csrf_token'];
+    }
+}
+if ($csrf_token === '' && file_exists('/var/local/emhttp/var.ini')) {
+    $raw = @file_get_contents('/var/local/emhttp/var.ini');
+    if ($raw && preg_match('/csrf_token="([^"]+)"/', $raw, $m)) {
+        $csrf_token = $m[1];
+    }
+}
 ?>
 <script>
 window.csrf_token = <?=json_encode($csrf_token)?>;

@@ -8,9 +8,12 @@ The generated plugin writes the app files under
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+BINARY_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp"}
 
 ROOT = Path(__file__).resolve().parent.parent
 UNRAID = ROOT / "unraid"
@@ -21,6 +24,7 @@ APP_FILES = [
     "app.js",
     "style.css",
     "requirements.txt",
+    "images/ca-workshop-icon.png",
     "automation/template_validation/__init__.py",
     "automation/template_validation/validate_app_config.py",
 ]
@@ -28,7 +32,16 @@ APP_FILES = [
 
 def plugin_index_html() -> str:
     source = (ROOT / "index.html").read_text(encoding="utf-8")
-    bootstrap = "<script>window.CA_WORKSHOP_API_BASE='api.php?path=';</script>\n"
+    bootstrap = (
+        "<script>\n"
+        "window.CA_WORKSHOP_API_BASE='api.php?path=';\n"
+        "try {\n"
+        "  var t = new URLSearchParams(window.location.search).get('csrf_token');\n"
+        "  if (t) window.csrf_token = t;\n"
+        "  else if (window.parent && window.parent.csrf_token) window.csrf_token = window.parent.csrf_token;\n"
+        "} catch(e) {}\n"
+        "</script>\n"
+    )
     marker = '<script src="app.js"></script>'
     if marker not in source:
         raise SystemExit("index.html no longer references app.js; update the plugin bootstrap injection.")
@@ -37,6 +50,16 @@ def plugin_index_html() -> str:
 
 def inline_file(path: str, content: str) -> str:
     return f'<FILE Name="{escape(path, {chr(34): "&quot;"})}">\n<INLINE>{escape(content)}</INLINE>\n</FILE>\n'
+
+
+def inline_binary(path: str, data: bytes) -> str:
+    """Emit a <FILE Run="/bin/bash"> block that base64-decodes the file on install."""
+    b64 = base64.b64encode(data).decode()
+    script = (
+        f"mkdir -p \"$(dirname '{path}')\" && "
+        f"printf '%s' '{b64}' | base64 -d > '{path}'"
+    )
+    return f'<FILE Run="/bin/bash">\n<INLINE>{escape(script)}</INLINE>\n</FILE>\n'
 
 
 def main() -> int:
@@ -58,7 +81,11 @@ def main() -> int:
         source = ROOT / relative
         if not source.is_file():
             raise SystemExit(f"Missing build input: {relative}")
-        parts.append(inline_file(f"/usr/local/emhttp/plugins/ca-workshop/{relative}", source.read_text(encoding="utf-8")))
+        dest = f"/usr/local/emhttp/plugins/ca-workshop/{relative}"
+        if source.suffix.lower() in BINARY_EXTENSIONS:
+            parts.append(inline_binary(dest, source.read_bytes()))
+        else:
+            parts.append(inline_file(dest, source.read_text(encoding="utf-8")))
 
     parts.append(inline_file("/usr/local/emhttp/plugins/ca-workshop/index.html", plugin_index_html()))
     parts.append(inline_file("/etc/rc.d/rc.ca-workshop", "#!/bin/bash\nexec /usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop \"$@\"\n"))
@@ -75,6 +102,8 @@ def main() -> int:
         'name="ca-workshop"',
         f'author="{escape(args.author, {chr(34): "&quot;"})}"',
         f'version="{escape(args.version, {chr(34): "&quot;"})}"',
+        'launch="Settings/CAWorkshopSettings"',
+        'icon="/usr/local/emhttp/plugins/ca-workshop/images/ca-workshop-icon.png"',
     ]
     if args.plugin_url:
         attributes.append(f'pluginURL="{escape(args.plugin_url, {chr(34): "&quot;"})}"')

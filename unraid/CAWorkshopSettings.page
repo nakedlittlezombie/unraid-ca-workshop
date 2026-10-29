@@ -7,8 +7,22 @@ Icon="fa-cubes"
  * Unraid Settings Page for CA Workshop
  * Configures Dashboard tile and WebGUI navigation placement.
  */
-$var = @parse_ini_file('/var/local/emhttp/var.ini');
-$csrf_token = $var['csrf_token'] ?? '';
+$csrf_token = '';
+if (isset($var['csrf_token']) && is_string($var['csrf_token']) && $var['csrf_token'] !== '') {
+    $csrf_token = $var['csrf_token'];
+}
+if ($csrf_token === '' && file_exists('/var/local/emhttp/var.ini')) {
+    $ini = @parse_ini_file('/var/local/emhttp/var.ini');
+    if (isset($ini['csrf_token']) && is_string($ini['csrf_token'])) {
+        $csrf_token = $ini['csrf_token'];
+    }
+}
+if ($csrf_token === '' && file_exists('/var/local/emhttp/var.ini')) {
+    $raw = @file_get_contents('/var/local/emhttp/var.ini');
+    if ($raw && preg_match('/csrf_token="([^"]+)"/', $raw, $m)) {
+        $csrf_token = $m[1];
+    }
+}
 $state_file = (getenv('CA_WORKSHOP_STATE_DIR') ?: '/boot/config/plugins/ca-workshop') . '/.ca-workshop-state.json';
 $dashboard_widget = true;
 $menu_placement = 'utilities';
@@ -75,28 +89,40 @@ $('#cawSettingsForm').on('submit', function(e) {
   
   var enabled = $('select[name="dashboard_widget_enabled"]').val() === '1';
   var placement = $('select[name="menu_placement"]').val();
-  var token = $('input[name="csrf_token"]').val();
+  var token = $('input[name="csrf_token"]').val() || (window.csrf_token || '');
 
-  $.ajax({
-    url: '/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin&csrf_token=' + encodeURIComponent(token),
-    type: 'POST',
-    headers: { 'X-CA-Workshop': '1', 'X-CSRF-Token': token },
-    data: {
-      csrf_token: token,
-      payload: JSON.stringify({ dashboard_widget_enabled: enabled, menu_placement: placement })
-    },
-    dataType: 'json',
-    success: function(data) {
-      status.text('Settings saved. Refreshing Unraid WebGUI…');
-      setTimeout(function() {
-        location.reload();
-      }, 900);
-    },
-    error: function(xhr) {
-      btn.prop('disabled', false).text('Save Settings');
-      var err = xhr.responseJSON ? xhr.responseJSON.error : xhr.responseText;
-      status.css('color', '#cf222e').text('Error saving settings: ' + (err || 'Server error'));
-    }
-  });
+  function sendSave(tok) {
+    $.ajax({
+      url: '/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin&csrf_token=' + encodeURIComponent(tok),
+      type: 'POST',
+      headers: { 'X-CA-Workshop': '1', 'X-CSRF-Token': tok },
+      data: {
+        csrf_token: tok,
+        payload: JSON.stringify({ dashboard_widget_enabled: enabled, menu_placement: placement })
+      },
+      dataType: 'json',
+      success: function(data) {
+        status.text('Settings saved. Refreshing Unraid WebGUI…');
+        setTimeout(function() {
+          location.reload();
+        }, 900);
+      },
+      error: function(xhr) {
+        btn.prop('disabled', false).text('Save Settings');
+        var err = xhr.responseJSON ? xhr.responseJSON.error : xhr.responseText;
+        status.css('color', '#cf222e').text('Error saving settings: ' + (err || 'Server error'));
+      }
+    });
+  }
+
+  if (!token) {
+    $.getJSON('/plugins/ca-workshop/api.php?get_csrf_token=1', function(data) {
+      sendSave(data.csrf_token || '');
+    }).fail(function() {
+      sendSave('');
+    });
+  } else {
+    sendSave(token);
+  }
 });
 </script>
