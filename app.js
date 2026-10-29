@@ -358,16 +358,16 @@ async function loadAISettings(){
     if(status)status.textContent=error.message;
   }
 }
+let aiChecking=false;
 
 async function discoverAIModels(){
   const button=document.querySelector('#aiDiscoverModels');
   const status=document.querySelector('#aiSettingsStatus');
   const base=document.querySelector('#aiBaseUrl');
   const key=document.querySelector('#aiApiKey');
-  if(!base||!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base?.focus();return}
+  if(!base||!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base?.focus();aiChecking=false;return}
   const original=button.textContent;
-  button.disabled=true;
-  button.textContent='Checking…';
+  aiChecking=true;
   if(status)status.textContent='Asking the endpoint for its model list…';
   try{
     const data=await api('/api/settings/ai/models',{method:'POST',body:JSON.stringify({base_url:base.value.trim(),api_key:key.value.trim()})});
@@ -377,7 +377,7 @@ async function discoverAIModels(){
   }catch(error){
     if(status)status.textContent=error.message;
   }finally{
-    button.disabled=false;
+    aiChecking=false;
     button.textContent=original;
   }
 }
@@ -391,6 +391,7 @@ document.querySelector('#aiSettingsForm')?.addEventListener('submit',async event
   const status=document.querySelector('#aiSettingsStatus');
   const button=event.currentTarget.querySelector('button[type="submit"]');
   if(!base.value.trim()){if(status)status.textContent='Enter the endpoint base URL first.';base.focus();return}
+  if(!model.value.trim()){if(status)status.textContent='Check the endpoint first to load models, then choose one.';return}
   button.disabled=true;
   if(status)status.textContent='Checking the endpoint and saving settings…';
   try{
@@ -447,7 +448,6 @@ async function loadRuntime(){
     runtime={...runtime,...await api('/api/runtime')};
     renderRuntime();
     updateUnraidModeUI();
-    if(runtime.unraid){const p=document.querySelector('input[name="parent"]');if(p&&!p.value.trim())p.value='/mnt/cache';}
     return runtime;
   }catch(error){
     const box=document.querySelector('#runtimeStatus');
@@ -456,3 +456,4 @@ async function loadRuntime(){
   }
 }
 loadRuntime();
+document.querySelector('#browseParent')?.addEventListener('click',async()=>{try{const path=window.prompt('Enter parent folder for clone (e.g. /mnt/cache or /home/user/dev):');if(path){const p=document.querySelector('#bootstrapParent');if(p)p.value=path.trim();}}catch(e){}});

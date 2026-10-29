@@ -1437,13 +1437,14 @@ class Handler(BaseHTTPRequestHandler):
             record_activity("Repository connected", path.name)
             self.send_json(inspect_repo(REPO)); return
         if self.path=="/api/repo/bootstrap":
-            token=str(data.get("token", "")).strip() or GITHUB_TOKEN; repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "/mnt/cache" if running_on_unraid() else "~/dev")).strip()
+            token=str(data.get("token", "")).strip() or GITHUB_TOKEN; repo_name=str(data.get("name", "")).strip(); description=str(data.get("description", "")).strip()[:350]; overview=str(data.get("overview", "")).strip()[:4000]; support_url=str(data.get("support_url", "")).strip(); parent_raw=str(data.get("parent", "~/dev")).strip()
             if not 20<=len(token)<=512 or not all(32<=ord(c)<127 for c in token): self.send_json({"error":"Save a GitHub token in Settings or enter a token for this one-time setup."},400); return
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",repo_name): self.send_json({"error":"Use a repository name with letters, numbers, dots, underscores, or hyphens."},400); return
             if not overview: self.send_json({"error":"Add a short description for the repository profile."},400); return
             if support_url:
                 parsed_support=urlparse(support_url)
                 if parsed_support.scheme!="https" or not parsed_support.hostname or parsed_support.username or parsed_support.password: self.send_json({"error":"The support link must be a valid HTTPS address."},400); return
+            if not parent_raw: self.send_json({"error":"Choose a parent folder for the clone."},400); return
             parent=Path(os.path.expanduser(parent_raw)).resolve()
             try:
                 parent.mkdir(parents=True, exist_ok=True)
@@ -1464,6 +1465,10 @@ class Handler(BaseHTTPRequestHandler):
                     shutil.rmtree(target,ignore_errors=True)
                     raise ValueError(f"GitHub created {created.get('html_url',owner+'/'+repo_name)}, but cloning failed. Check that Git is installed, then connect that repository by its GitHub URL. "+cloned.stderr.strip()[-500:])
                 bootstrap_profile(target,owner,repo_name,overview,support_url)
+                try:
+                    subprocess.run(["git","-C",str(target),"pull","--ff-only"],capture_output=True,text=True,timeout=30)
+                except Exception:
+                    pass
                 REPO=target; save_state(); record_activity("Repository created from starter",f"{owner}/{repo_name}")
                 result=inspect_repo(REPO); result["github_url"]=created.get("html_url",f"https://github.com/{owner}/{repo_name}"); result["path"]=str(REPO)
                 self.send_json(result,201)
