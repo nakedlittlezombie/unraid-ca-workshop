@@ -109,8 +109,8 @@ def main() -> int:
         parts.append(inline_file(target, (UNRAID / relative).read_text(encoding="utf-8")))
 
     attributes = [
-        'name="ca-workshop"',
-        f'author="{escape(args.author, {chr(34): "&quot;"})}"',
+        'name="Community Apps Workshop"',
+        'author="nakedlittlezombie"',
         f'version="{escape(args.version, {chr(34): "&quot;"})}"',
         'launch="Settings/CAWorkshopSettings"',
         'icon="ca-workshop.png"',
