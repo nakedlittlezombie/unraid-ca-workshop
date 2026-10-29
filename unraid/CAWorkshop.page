@@ -1,8 +1,16 @@
 Menu="Utilities:10"
+Icon="fa-cubes"
 Name="CA Workshop"
 Type="xmenu"
 Tabs="false"
 ---
+<?php
+$var = @parse_ini_file('/var/local/emhttp/var.ini');
+$csrf_token = $var['csrf_token'] ?? '';
+?>
+<script>
+window.csrf_token = <?=json_encode($csrf_token)?>;
+</script>
 <style>
   .caw-frame-wrap { margin: -12px -12px 0; }
   .caw-frame { display: block; width: 100%; height: calc(100vh - 92px); min-height: 620px; border: 0; background: #18181b; }
@@ -10,5 +18,5 @@ Tabs="false"
 </style>
 <p class="caw-frame-note">CA Workshop runs as a loopback-only service on this Unraid server. API calls are relayed through the plugin page; the service is not exposed on the network.</p>
 <div class="caw-frame-wrap">
-  <iframe class="caw-frame" src="/plugins/ca-workshop/index.html" title="CA Workshop"></iframe>
+  <iframe id="cawFrame" class="caw-frame" src="/plugins/ca-workshop/index.html?csrf_token=<?=$csrf_token?>" title="CA Workshop"></iframe>
 </div>

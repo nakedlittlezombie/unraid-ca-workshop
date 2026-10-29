@@ -74,6 +74,7 @@ try:
     SUBMISSION_STATUSES = saved_state.get("submissions", {})
     if not isinstance(SUBMISSION_STATUSES, dict): SUBMISSION_STATUSES = {}
     DASHBOARD_WIDGET_ENABLED = bool(saved_state.get("dashboard_widget_enabled", True))
+    MENU_PLACEMENT = str(saved_state.get("menu_placement", "utilities"))
 except (OSError, ValueError, TypeError):
     REPO = None
     HISTORY = []
@@ -82,6 +83,7 @@ except (OSError, ValueError, TypeError):
     PENDING_UNRAID_HOST = ""
     SUBMISSION_STATUSES = {}
     DASHBOARD_WIDGET_ENABLED = True
+    MENU_PLACEMENT = "utilities"
 
 try:
     UNRAID_API_KEY = json.loads(UNRAID_SECRET_FILE.read_text()).get("api_key", "")
@@ -118,7 +120,19 @@ def save_state():
         "common_install_vars": saved_state.get("common_install_vars", {}),
         "submissions": SUBMISSION_STATUSES,
         "dashboard_widget_enabled": DASHBOARD_WIDGET_ENABLED,
+        "menu_placement": MENU_PLACEMENT,
     }, indent=2))
+
+def apply_unraid_menu_placement(placement):
+    page_file = Path("/usr/local/emhttp/plugins/ca-workshop/CAWorkshop.page")
+    if page_file.is_file():
+        menu_val = 'Menu="Tasks:50"' if placement == "tasks" else ('Menu="None"' if placement == "hidden" else 'Menu="Utilities:10"')
+        try:
+            content = page_file.read_text(encoding="utf-8")
+            new_content = re.sub(r'^Menu="[^"]*"', menu_val, content, flags=re.MULTILINE)
+            if new_content != content:
+                page_file.write_text(new_content, encoding="utf-8")
+        except OSError: pass
 
 def save_unraid_key(api_key):
     UNRAID_SECRET_FILE.write_text(json.dumps({"api_key": api_key}))
@@ -1022,8 +1036,9 @@ class Handler(BaseHTTPRequestHandler):
         global REPO
         if self.path=="/api/settings":
             sync=repo_sync_status() if REPO else {"connected":False,"synced":False,"error":"Connect a Git repository first."}
-            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync,"dashboard_widget":{"enabled":DASHBOARD_WIDGET_ENABLED}}); return
+            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync,"dashboard_widget":{"enabled":DASHBOARD_WIDGET_ENABLED},"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/settings/dashboard-widget": self.send_json({"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/settings/unraid-plugin": self.send_json({"ok":True,"dashboard_widget_enabled":DASHBOARD_WIDGET_ENABLED,"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/submissions/status": self.send_json({"statuses":SUBMISSION_STATUSES,"widget":dashboard_widget_data()}); return
         if self.path=="/api/dashboard/widget": self.send_json(dashboard_widget_data()); return
         if self.path=="/api/settings/ai": self.send_json(ai_config_payload()); return
@@ -1172,7 +1187,7 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file(): self.send_json({"error":"Not found"},404); return
         data=target.read_bytes(); types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8"}; self.send_response(200); self.send_header("Content-Type",types.get(target.suffix,"application/octet-stream")); self.send_header("Content-Length",str(len(data))); self.send_header("Referrer-Policy","no-referrer"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
-        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN
+        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN, DASHBOARD_WIDGET_ENABLED, MENU_PLACEMENT
         try: data=self.body()
         except Exception:self.send_json({"error":"Invalid JSON request"},400); return
         if self.path=="/api/unraid/docker/run":
@@ -1187,11 +1202,17 @@ class Handler(BaseHTTPRequestHandler):
             save_state()
             self.send_json({"ok":True,"vars":vars_data}); return
         if self.path=="/api/settings/dashboard-widget":
-            global DASHBOARD_WIDGET_ENABLED
             DASHBOARD_WIDGET_ENABLED=bool(data.get("enabled",True))
             save_state()
             record_activity("Dashboard widget "+("enabled" if DASHBOARD_WIDGET_ENABLED else "disabled"),"Unraid Dashboard tile setting updated")
             self.send_json({"ok":True,"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/settings/unraid-plugin":
+            DASHBOARD_WIDGET_ENABLED=bool(data.get("dashboard_widget_enabled",True))
+            MENU_PLACEMENT=str(data.get("menu_placement","utilities"))
+            save_state()
+            apply_unraid_menu_placement(MENU_PLACEMENT)
+            record_activity("Plugin settings updated",f"widget={'on' if DASHBOARD_WIDGET_ENABLED else 'off'}, menu={MENU_PLACEMENT}")
+            self.send_json({"ok":True,"dashboard_widget_enabled":DASHBOARD_WIDGET_ENABLED,"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/submissions/status":
             target_file=str(data.get("file","")).strip()
             status=str(data.get("status","")).strip()

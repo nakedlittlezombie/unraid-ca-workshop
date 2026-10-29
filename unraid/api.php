@@ -20,7 +20,14 @@ if ($path === '' || strpos($path, '/api/') !== 0 || strpos($path, '..') !== fals
 $url = 'http://127.0.0.1:8765' . $path;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $headers = ['Accept: application/json'];
-if (!empty($_SERVER['CONTENT_TYPE'])) {
+
+// If payload was posted via form-urlencoded (to satisfy Unraid local_prepend.php csrf check),
+// unpack it as application/json for the Python backend.
+$post_payload = null;
+if (isset($_POST['payload'])) {
+    $post_payload = (string) $_POST['payload'];
+    $headers[] = 'Content-Type: application/json';
+} elseif (!empty($_SERVER['CONTENT_TYPE'])) {
     $headers[] = 'Content-Type: ' . $_SERVER['CONTENT_TYPE'];
 }
 
@@ -34,7 +41,8 @@ curl_setopt_array($handle, [
     CURLOPT_HTTPHEADER => $headers,
 ]);
 if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-    curl_setopt($handle, CURLOPT_POSTFIELDS, file_get_contents('php://input'));
+    $body = $post_payload !== null ? $post_payload : file_get_contents('php://input');
+    curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
 }
 
 $body = curl_exec($handle);

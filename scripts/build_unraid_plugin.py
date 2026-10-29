@@ -67,6 +67,7 @@ def main() -> int:
         ("rc.ca-workshop", "/usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop"),
         ("CAWorkshop.page", "/usr/local/emhttp/plugins/ca-workshop/CAWorkshop.page"),
         ("CAWorkshopDashboard.page", "/usr/local/emhttp/plugins/ca-workshop/CAWorkshopDashboard.page"),
+        ("CAWorkshopSettings.page", "/usr/local/emhttp/plugins/ca-workshop/CAWorkshopSettings.page"),
     ):
         parts.append(inline_file(target, (UNRAID / relative).read_text(encoding="utf-8")))
 

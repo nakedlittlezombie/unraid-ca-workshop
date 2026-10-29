@@ -1,0 +1,102 @@
+Menu="UserUtilities"
+Title="CA Workshop"
+Icon="fa-cubes"
+---
+<?php
+/*
+ * Unraid Settings Page for CA Workshop
+ * Configures Dashboard tile and WebGUI navigation placement.
+ */
+$var = @parse_ini_file('/var/local/emhttp/var.ini');
+$csrf_token = $var['csrf_token'] ?? '';
+$state_file = (getenv('CA_WORKSHOP_STATE_DIR') ?: '/boot/config/plugins/ca-workshop') . '/.ca-workshop-state.json';
+$dashboard_widget = true;
+$menu_placement = 'utilities';
+if (file_exists($state_file)) {
+    $raw = @file_get_contents($state_file);
+    $saved = $raw ? json_decode($raw, true) : null;
+    if (is_array($saved)) {
+        if (array_key_exists('dashboard_widget_enabled', $saved)) {
+            $dashboard_widget = (bool)$saved['dashboard_widget_enabled'];
+        }
+        if (!empty($saved['menu_placement'])) {
+            $menu_placement = (string)$saved['menu_placement'];
+        }
+    }
+}
+$open_url = ($menu_placement === 'tasks') ? '/CAWorkshop' : '/Utilities/CAWorkshop';
+?>
+
+<div style="max-width: 720px; margin: 20px auto; padding: 22px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+    <div>
+      <h2 style="margin: 0 0 6px; font-size: 18px;">CA Workshop Settings</h2>
+      <p style="margin: 0; color: #8a9490; font-size: 12px;">Configure Unraid WebGUI integration, dashboard widget display, and navigation.</p>
+    </div>
+    <a href="<?=$open_url?>" class="button" style="text-decoration:none; padding: 8px 14px; background: #2ea44f; color: #fff; border-radius: 6px; font-weight: 600; font-size: 12px;">Open CA Workshop ↗</a>
+  </div>
+
+  <form id="cawSettingsForm" method="POST" action="/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin">
+    <input type="hidden" name="csrf_token" value="<?=$csrf_token?>">
+
+    <div style="margin-bottom: 20px;">
+      <label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px;">Dashboard Widget Display</label>
+      <select name="dashboard_widget_enabled" style="width: 100%; max-width: 420px; padding: 8px 10px; border-radius: 5px; border: 1px solid #3e4451; background: #20242b; color: #fff;">
+        <option value="1" <?=$dashboard_widget ? 'selected' : ''?>>Enabled — Show pending approvals and approved apps on Dashboard</option>
+        <option value="0" <?=!$dashboard_widget ? 'selected' : ''?>>Disabled — Hide widget tile from Dashboard</option>
+      </select>
+      <div style="font-size: 11px; color: #8a9490; margin-top: 4px;">Controls whether the CA Workshop submission status widget appears on your main Unraid Dashboard.</div>
+    </div>
+
+    <div style="margin-bottom: 24px;">
+      <label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px;">WebGUI Navigation Placement</label>
+      <select name="menu_placement" style="width: 100%; max-width: 420px; padding: 8px 10px; border-radius: 5px; border: 1px solid #3e4451; background: #20242b; color: #fff;">
+        <option value="tasks" <?=$menu_placement === 'tasks' ? 'selected' : ''?>>Dedicated Menu Tab — Add 'CA Workshop' to top navigation bar</option>
+        <option value="utilities" <?=$menu_placement === 'utilities' ? 'selected' : ''?>>Utilities Menu — Access via Tools → CA Workshop</option>
+        <option value="hidden" <?=$menu_placement === 'hidden' ? 'selected' : ''?>>Plugins &amp; Settings Only — Access from Settings/Plugins icons</option>
+      </select>
+      <div style="font-size: 11px; color: #8a9490; margin-top: 4px;">Choose how you want to open CA Workshop in your Unraid WebGUI.</div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; margin-top: 20px;">
+      <button type="submit" id="cawSaveBtn" class="button" style="padding: 9px 18px; background: #e36209; color: #fff; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer;">Save Settings</button>
+      <span id="cawSaveStatus" style="font-size: 12px; color: #2ea44f;"></span>
+    </div>
+  </form>
+</div>
+
+<script>
+$('#cawSettingsForm').on('submit', function(e) {
+  e.preventDefault();
+  var btn = $('#cawSaveBtn');
+  var status = $('#cawSaveStatus');
+  btn.prop('disabled', true).text('Saving…');
+  status.text('').css('color', '#2ea44f');
+  
+  var enabled = $('select[name="dashboard_widget_enabled"]').val() === '1';
+  var placement = $('select[name="menu_placement"]').val();
+  var token = $('input[name="csrf_token"]').val();
+
+  $.ajax({
+    url: '/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin&csrf_token=' + encodeURIComponent(token),
+    type: 'POST',
+    headers: { 'X-CA-Workshop': '1', 'X-CSRF-Token': token },
+    data: {
+      csrf_token: token,
+      payload: JSON.stringify({ dashboard_widget_enabled: enabled, menu_placement: placement })
+    },
+    dataType: 'json',
+    success: function(data) {
+      status.text('Settings saved. Refreshing Unraid WebGUI…');
+      setTimeout(function() {
+        location.reload();
+      }, 900);
+    },
+    error: function(xhr) {
+      btn.prop('disabled', false).text('Save Settings');
+      var err = xhr.responseJSON ? xhr.responseJSON.error : xhr.responseText;
+      status.css('color', '#cf222e').text('Error saving settings: ' + (err || 'Server error'));
+    }
+  });
+});
+</script>

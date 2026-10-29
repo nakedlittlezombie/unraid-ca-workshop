@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29b" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29b. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -78,6 +78,7 @@ try:
     SUBMISSION_STATUSES = saved_state.get("submissions", {})
     if not isinstance(SUBMISSION_STATUSES, dict): SUBMISSION_STATUSES = {}
     DASHBOARD_WIDGET_ENABLED = bool(saved_state.get("dashboard_widget_enabled", True))
+    MENU_PLACEMENT = str(saved_state.get("menu_placement", "utilities"))
 except (OSError, ValueError, TypeError):
     REPO = None
     HISTORY = []
@@ -86,6 +87,7 @@ except (OSError, ValueError, TypeError):
     PENDING_UNRAID_HOST = ""
     SUBMISSION_STATUSES = {}
     DASHBOARD_WIDGET_ENABLED = True
+    MENU_PLACEMENT = "utilities"
 
 try:
     UNRAID_API_KEY = json.loads(UNRAID_SECRET_FILE.read_text()).get("api_key", "")
@@ -122,7 +124,19 @@ def save_state():
         "common_install_vars": saved_state.get("common_install_vars", {}),
         "submissions": SUBMISSION_STATUSES,
         "dashboard_widget_enabled": DASHBOARD_WIDGET_ENABLED,
+        "menu_placement": MENU_PLACEMENT,
     }, indent=2))
+
+def apply_unraid_menu_placement(placement):
+    page_file = Path("/usr/local/emhttp/plugins/ca-workshop/CAWorkshop.page")
+    if page_file.is_file():
+        menu_val = 'Menu="Tasks:50"' if placement == "tasks" else ('Menu="None"' if placement == "hidden" else 'Menu="Utilities:10"')
+        try:
+            content = page_file.read_text(encoding="utf-8")
+            new_content = re.sub(r'^Menu="[^"]*"', menu_val, content, flags=re.MULTILINE)
+            if new_content != content:
+                page_file.write_text(new_content, encoding="utf-8")
+        except OSError: pass
 
 def save_unraid_key(api_key):
     UNRAID_SECRET_FILE.write_text(json.dumps({"api_key": api_key}))
@@ -1026,8 +1040,9 @@ class Handler(BaseHTTPRequestHandler):
         global REPO
         if self.path=="/api/settings":
             sync=repo_sync_status() if REPO else {"connected":False,"synced":False,"error":"Connect a Git repository first."}
-            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync,"dashboard_widget":{"enabled":DASHBOARD_WIDGET_ENABLED}}); return
+            self.send_json({"github":{"configured":bool(GITHUB_TOKEN),"login":GITHUB_LOGIN},"unraid":{"connected":bool(UNRAID_API_KEY and UNRAID_HOST),"host":UNRAID_HOST},"sync":sync,"dashboard_widget":{"enabled":DASHBOARD_WIDGET_ENABLED},"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/settings/dashboard-widget": self.send_json({"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/settings/unraid-plugin": self.send_json({"ok":True,"dashboard_widget_enabled":DASHBOARD_WIDGET_ENABLED,"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/submissions/status": self.send_json({"statuses":SUBMISSION_STATUSES,"widget":dashboard_widget_data()}); return
         if self.path=="/api/dashboard/widget": self.send_json(dashboard_widget_data()); return
         if self.path=="/api/settings/ai": self.send_json(ai_config_payload()); return
@@ -1176,7 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file(): self.send_json({"error":"Not found"},404); return
         data=target.read_bytes(); types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8"}; self.send_response(200); self.send_header("Content-Type",types.get(target.suffix,"application/octet-stream")); self.send_header("Content-Length",str(len(data))); self.send_header("Referrer-Policy","no-referrer"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
-        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN
+        global REPO, UNRAID_HOST, UNRAID_API_KEY, PENDING_UNRAID_STATE, PENDING_UNRAID_HOST, GITHUB_TOKEN, GITHUB_LOGIN, DASHBOARD_WIDGET_ENABLED, MENU_PLACEMENT
         try: data=self.body()
         except Exception:self.send_json({"error":"Invalid JSON request"},400); return
         if self.path=="/api/unraid/docker/run":
@@ -1191,11 +1206,17 @@ class Handler(BaseHTTPRequestHandler):
             save_state()
             self.send_json({"ok":True,"vars":vars_data}); return
         if self.path=="/api/settings/dashboard-widget":
-            global DASHBOARD_WIDGET_ENABLED
             DASHBOARD_WIDGET_ENABLED=bool(data.get("enabled",True))
             save_state()
             record_activity("Dashboard widget "+("enabled" if DASHBOARD_WIDGET_ENABLED else "disabled"),"Unraid Dashboard tile setting updated")
             self.send_json({"ok":True,"enabled":DASHBOARD_WIDGET_ENABLED}); return
+        if self.path=="/api/settings/unraid-plugin":
+            DASHBOARD_WIDGET_ENABLED=bool(data.get("dashboard_widget_enabled",True))
+            MENU_PLACEMENT=str(data.get("menu_placement","utilities"))
+            save_state()
+            apply_unraid_menu_placement(MENU_PLACEMENT)
+            record_activity("Plugin settings updated",f"widget={'on' if DASHBOARD_WIDGET_ENABLED else 'off'}, menu={MENU_PLACEMENT}")
+            self.send_json({"ok":True,"dashboard_widget_enabled":DASHBOARD_WIDGET_ENABLED,"menu_placement":MENU_PLACEMENT}); return
         if self.path=="/api/submissions/status":
             target_file=str(data.get("file","")).strip()
             status=str(data.get("status","")).strip()
@@ -1767,12 +1788,13 @@ if __name__=="__main__":
 let runtime={unraid:false,platform:'Workstation',docker:{},plugins:{},ca:{},templates_user:{}};
 const pages=[...document.querySelectorAll('.page')];let repo=null,pageLoad=Promise.resolve(),selectedExternalTemplate=null,caPage=0,caTotal=0,caTimer,caLoading=false,caBrowserRequest=0,caObserver=null,composeTemplates=[],templateEditorDocument=null,templateEditorPath='',savedRepoFiles=new Set(),savedRepoFilesRepo='';
 function setTheme(theme){const chosen=theme==='light'?'light':'dark';document.documentElement.dataset.theme=chosen;localStorage.setItem('ca-workshop-theme',chosen);const button=document.querySelector('#themeToggle');button.textContent=chosen==='dark'?'☼':'☾';button.setAttribute('aria-label',chosen==='dark'?'Switch to light theme':'Switch to dark theme')}setTheme(localStorage.getItem('ca-workshop-theme')||'dark');document.querySelector('#themeToggle').addEventListener('click',()=&gt;setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
-function navigate(name){pages.forEach(p=&gt;p.classList.toggle('active-page',p.id===name));const appPages=['applications','template-editor','compose','application-stats','icon-tools'],pluginPages=['plugins','plugin-stats'],appWorkspace=appPages.includes(name),pluginWorkspace=pluginPages.includes(name);document.querySelectorAll('.nav').forEach(n=&gt;n.classList.toggle('active',n.dataset.page===(appWorkspace?'applications':pluginWorkspace?'plugins':name)));document.querySelectorAll('.nav-tree-item').forEach(n=&gt;n.classList.toggle('active',n.dataset.page===name||(name==='compose'&amp;&amp;n.dataset.page==='template-editor')||(name==='icon-tools'&amp;&amp;n.dataset.page==='applications')));document.querySelectorAll('.nav-tree').forEach(tree=&gt;tree.classList.toggle('tree-active',tree.getAttribute('aria-label')===(pluginWorkspace?'Plugin pages':'Application pages')));document.querySelector('#crumb').textContent=({repository:'Repository',applications:'Applications',submissions:'Submissions','application-stats':'Application statistics','plugins':'Plugins','plugin-stats':'Plugin statistics','ca-shim':'Repository preview','ca-browser':'CA Store',sandbox:'Docker sandbox','package-archive':'CA archive',settings:'Settings',compose:'Compose import','template-editor':'Application editor','profile-editor':'CA profile editor','icon-tools':'Application icons',docs:'Unraid docs'})[name]||'Repository';if(name==='sandbox')pageLoad=loadDocker();else if(name==='package-archive')pageLoad=loadPackage();else if(name==='settings')pageLoad=loadSettings();else if(name==='ca-shim')pageLoad=loadCatalog();else if(name==='ca-browser')pageLoad=loadCABrowser();else if(name==='applications')pageLoad=loadApplications();else if(name==='plugins')pageLoad=loadPlugins();else if(name==='plugin-stats')pageLoad=loadPluginStats();else if(name==='submissions'){pageLoad=Promise.all([loadSubmissionTracker()])}else if(name==='application-stats')pageLoad=loadPublishedStats();else if(name==='compose')pageLoad=loadComposePage();else if(name==='template-editor')pageLoad=loadTemplateEditor();else if(name==='profile-editor')pageLoad=loadCAProfile();else if(name==='icon-tools')pageLoad=loadIconTools();window.scrollTo({top:0,behavior:'smooth'});return pageLoad}
-document.querySelectorAll('.nav').forEach(n=&gt;n.addEventListener('click',()=&gt;navigate(n.dataset.page)));document.querySelectorAll('[data-go]').forEach(n=&gt;n.addEventListener('click',()=&gt;navigate(n.dataset.go)));document.querySelectorAll('.nav-tree-item').forEach(button=&gt;button.addEventListener('click',()=&gt;navigate(button.dataset.page)));
+function navigate(name){if((runtime.unraid||Boolean(window.CA_WORKSHOP_API_BASE))&amp;&amp;name==='sandbox')name='repository';pages.forEach(p=&gt;p.classList.toggle('active-page',p.id===name));const appPages=['applications','template-editor','compose','application-stats','icon-tools'],pluginPages=['plugins','plugin-stats'],appWorkspace=appPages.includes(name),pluginWorkspace=pluginPages.includes(name);document.querySelectorAll('.nav').forEach(n=&gt;n.classList.toggle('active',n.dataset.page===(appWorkspace?'applications':pluginWorkspace?'plugins':name)));document.querySelectorAll('.nav-tree-item').forEach(n=&gt;n.classList.toggle('active',n.dataset.page===name||(name==='compose'&amp;&amp;n.dataset.page==='template-editor')||(name==='icon-tools'&amp;&amp;n.dataset.page==='applications')));document.querySelectorAll('.nav-tree').forEach(tree=&gt;tree.classList.toggle('tree-active',tree.getAttribute('aria-label')===(pluginWorkspace?'Plugin pages':'Application pages')));document.querySelector('#crumb').textContent=({repository:'Repository',applications:'Applications',submissions:'Submissions','application-stats':'Application statistics','plugins':'Plugins','plugin-stats':'Plugin statistics','ca-shim':'Repository preview','ca-browser':'CA Store',sandbox:'Docker sandbox','package-archive':'CA archive',settings:'Settings',compose:'Compose import','template-editor':'Application editor','profile-editor':'CA profile editor','icon-tools':'Application icons',docs:'Unraid docs'})[name]||'Repository';if(name==='sandbox')pageLoad=loadDocker();else if(name==='package-archive')pageLoad=loadPackage();else if(name==='settings')pageLoad=loadSettings();else if(name==='ca-shim')pageLoad=loadCatalog();else if(name==='ca-browser')pageLoad=loadCABrowser();else if(name==='applications')pageLoad=loadApplications();else if(name==='plugins')pageLoad=loadPlugins();else if(name==='plugin-stats')pageLoad=loadPluginStats();else if(name==='submissions'){pageLoad=Promise.all([loadSubmissionTracker()])}else if(name==='application-stats')pageLoad=loadPublishedStats();else if(name==='compose')pageLoad=loadComposePage();else if(name==='template-editor')pageLoad=loadTemplateEditor();else if(name==='profile-editor')pageLoad=loadCAProfile();else if(name==='icon-tools')pageLoad=loadIconTools();window.scrollTo({top:0,behavior:'smooth'});return pageLoad}
+document.querySelectorAll('.nav').forEach(n=&gt;n.addEventListener('click',()=&gt;navigate(n.dataset.page)));document.querySelectorAll('[data-go]').forEach(n=&gt;n.addEventListener('click',()=&gt;navigate(n.dataset.go)));document.querySelectorAll('.nav-tree-item').forEach(button=&gt;button.addEventListener('click',()=&gt;navigate(button.dataset.page)));if(window.CA_WORKSHOP_API_BASE)document.querySelectorAll('[data-page="sandbox"]').forEach(el=&gt;el.hidden=true);
 let toastTimer,packagePollTimer;function toast(message){const t=document.querySelector('#toast');t.textContent=message;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=&gt;t.classList.remove('show'),3000)}
 const apiBase=window.CA_WORKSHOP_API_BASE||'';
-function apiUrl(path){return apiBase?apiBase+encodeURIComponent(path):path}
-async function api(path,options={}){const url=apiUrl(path);const response=await fetch(url,{...options,headers:{'Content-Type':'application/json','X-CA-Workshop':'1',...(options.headers||{})}});let data={};try{data=await response.json()}catch{}if(!response.ok)throw Error(data.error||`Request failed (${response.status})`);return data}
+try{const searchToken=new URLSearchParams(window.location.search).get('csrf_token');if(searchToken)window.csrf_token=searchToken;else if(window.parent&amp;&amp;window.parent.csrf_token)window.csrf_token=window.parent.csrf_token;}catch(e){}
+function apiUrl(path){if(!apiBase)return path;let url=apiBase+encodeURIComponent(path);if(window.csrf_token)url+='&amp;csrf_token='+encodeURIComponent(window.csrf_token);return url}
+async function api(path,options={}){const url=apiUrl(path);const isWrite=options.method&amp;&amp;options.method.toUpperCase()!=='GET';if(!window.csrf_token){try{const st=new URLSearchParams(window.location.search).get('csrf_token');if(st)window.csrf_token=st;else if(window.parent&amp;&amp;window.parent.csrf_token)window.csrf_token=window.parent.csrf_token;}catch(e){}}let fetchOptions;if(isWrite&amp;&amp;window.csrf_token&amp;&amp;apiBase){const payload=typeof options.body==='string'?options.body:JSON.stringify(options.body||{});fetchOptions={...options,headers:{'X-CA-Workshop':'1','X-CSRF-Token':window.csrf_token,...(options.headers||{})},body:new URLSearchParams({csrf_token:window.csrf_token,payload})};delete fetchOptions.headers['Content-Type'];}else{fetchOptions={...options,headers:{'Content-Type':'application/json','X-CA-Workshop':'1',...(options.headers||{})}};}const response=await fetch(url,fetchOptions);let data={};try{data=await response.json()}catch{}if(!response.ok)throw Error(data.error||`Request failed (${response.status})`);return data}
 let caProfileDocument=null,caProfileRepoPath='',caProfileOriginalLeafIndexes=new Set();
 const caProfileFields=['Icon','Profile','DonateLink','DonateText','WebPage','Forum'];
 function addCAProfileField(name='',value='',originalIndex=''){const row=document.createElement('div');row.className='profile-field-row';if(originalIndex!=='')row.dataset.originalIndex=originalIndex;const nameLabel=document.createElement('label'),nameInput=document.createElement('input');nameLabel.textContent='XML field';nameInput.type='text';nameInput.className='profile-field-name';nameInput.value=name;nameInput.placeholder='FieldName';nameInput.autocomplete='off';nameLabel.append(nameInput);const valueLabel=document.createElement('label'),valueInput=document.createElement('textarea');valueLabel.textContent='Value';valueInput.className='profile-field-value';valueInput.value=value;valueInput.rows=name==='Profile'||name==='DonateText'?3:2;valueLabel.append(valueInput);const remove=document.createElement('button');remove.type='button';remove.className='profile-field-remove';remove.textContent='×';remove.setAttribute('aria-label',`Remove ${name||'field'}`);remove.title='Remove field';row.append(nameLabel,valueLabel,remove);document.querySelector('#caProfileForm').append(row)}
@@ -2206,6 +2228,12 @@ async function loadRuntime(){
   try{
     runtime={...runtime,...await api('/api/runtime')};
     renderRuntime();
+    if(runtime.unraid||window.CA_WORKSHOP_API_BASE){
+      document.querySelectorAll('[data-page="sandbox"]').forEach(el=&gt;el.hidden=true);
+      const sandboxSection=document.querySelector('#sandbox');
+      if(sandboxSection)sandboxSection.hidden=true;
+      if(document.querySelector('#crumb').textContent==='Docker sandbox')navigate('repository');
+    }
     return runtime;
   }catch(error){
     const box=document.querySelector('#runtimeStatus');
@@ -2546,7 +2574,14 @@ if ($path === '' || strpos($path, '/api/') !== 0 || strpos($path, '..') !== fals
 $url = 'http://127.0.0.1:8765' . $path;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $headers = ['Accept: application/json'];
-if (!empty($_SERVER['CONTENT_TYPE'])) {
+
+// If payload was posted via form-urlencoded (to satisfy Unraid local_prepend.php csrf check),
+// unpack it as application/json for the Python backend.
+$post_payload = null;
+if (isset($_POST['payload'])) {
+    $post_payload = (string) $_POST['payload'];
+    $headers[] = 'Content-Type: application/json';
+} elseif (!empty($_SERVER['CONTENT_TYPE'])) {
     $headers[] = 'Content-Type: ' . $_SERVER['CONTENT_TYPE'];
 }
 
@@ -2560,7 +2595,8 @@ curl_setopt_array($handle, [
     CURLOPT_HTTPHEADER =&gt; $headers,
 ]);
 if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-    curl_setopt($handle, CURLOPT_POSTFIELDS, file_get_contents('php://input'));
+    $body = $post_payload !== null ? $post_payload : file_get_contents('php://input');
+    curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
 }
 
 $body = curl_exec($handle);
@@ -2589,11 +2625,28 @@ CONFIG_DIR="/boot/config/plugins/ca-workshop"
 PIDFILE="/var/run/ca-workshop.pid"
 LOGFILE="/var/log/ca-workshop.log"
 
+apply_menu_placement() {
+  local state_file="$CONFIG_DIR/.ca-workshop-state.json"
+  local page_file="$PLUGIN_DIR/CAWorkshop.page"
+  if [ -f "$state_file" ] &amp;&amp; [ -f "$page_file" ]; then
+    local placement
+    placement=$(grep -o '"menu_placement": *"[^"]*"' "$state_file" 2&gt;/dev/null | head -n1 | cut -d'"' -f4)
+    if [ "$placement" = "tasks" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="Tasks:50"/' "$page_file"
+    elif [ "$placement" = "hidden" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="None"/' "$page_file"
+    elif [ "$placement" = "utilities" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="Utilities:10"/' "$page_file"
+    fi
+  fi
+}
+
 start_service() {
   if [ -f "$PIDFILE" ] &amp;&amp; kill -0 "$(cat "$PIDFILE")" 2&gt;/dev/null; then
     return 0
   fi
   mkdir -p "$CONFIG_DIR" || return 1
+  apply_menu_placement
   if ! command -v python3 &gt;/dev/null 2&gt;&amp;1; then
     echo "python3 is required. Install Python 3 (for example with NerdTools) and restart CA Workshop." &gt;&gt; "$LOGFILE"
     return 1
@@ -2638,10 +2691,18 @@ esac
 </FILE>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/CAWorkshop.page">
 <INLINE>Menu="Utilities:10"
+Icon="fa-cubes"
 Name="CA Workshop"
 Type="xmenu"
 Tabs="false"
 ---
+&lt;?php
+$var = @parse_ini_file('/var/local/emhttp/var.ini');
+$csrf_token = $var['csrf_token'] ?? '';
+?&gt;
+&lt;script&gt;
+window.csrf_token = &lt;?=json_encode($csrf_token)?&gt;;
+&lt;/script&gt;
 &lt;style&gt;
   .caw-frame-wrap { margin: -12px -12px 0; }
   .caw-frame { display: block; width: 100%; height: calc(100vh - 92px); min-height: 620px; border: 0; background: #18181b; }
@@ -2649,7 +2710,7 @@ Tabs="false"
 &lt;/style&gt;
 &lt;p class="caw-frame-note"&gt;CA Workshop runs as a loopback-only service on this Unraid server. API calls are relayed through the plugin page; the service is not exposed on the network.&lt;/p&gt;
 &lt;div class="caw-frame-wrap"&gt;
-  &lt;iframe class="caw-frame" src="/plugins/ca-workshop/index.html" title="CA Workshop"&gt;&lt;/iframe&gt;
+  &lt;iframe id="cawFrame" class="caw-frame" src="/plugins/ca-workshop/index.html?csrf_token=&lt;?=$csrf_token?&gt;" title="CA Workshop"&gt;&lt;/iframe&gt;
 &lt;/div&gt;
 </INLINE>
 </FILE>
@@ -2807,6 +2868,111 @@ $(function() {
     });
   }
   setInterval(updateCAWorkshopTile, 30000);
+});
+&lt;/script&gt;
+</INLINE>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/ca-workshop/CAWorkshopSettings.page">
+<INLINE>Menu="UserUtilities"
+Title="CA Workshop"
+Icon="fa-cubes"
+---
+&lt;?php
+/*
+ * Unraid Settings Page for CA Workshop
+ * Configures Dashboard tile and WebGUI navigation placement.
+ */
+$var = @parse_ini_file('/var/local/emhttp/var.ini');
+$csrf_token = $var['csrf_token'] ?? '';
+$state_file = (getenv('CA_WORKSHOP_STATE_DIR') ?: '/boot/config/plugins/ca-workshop') . '/.ca-workshop-state.json';
+$dashboard_widget = true;
+$menu_placement = 'utilities';
+if (file_exists($state_file)) {
+    $raw = @file_get_contents($state_file);
+    $saved = $raw ? json_decode($raw, true) : null;
+    if (is_array($saved)) {
+        if (array_key_exists('dashboard_widget_enabled', $saved)) {
+            $dashboard_widget = (bool)$saved['dashboard_widget_enabled'];
+        }
+        if (!empty($saved['menu_placement'])) {
+            $menu_placement = (string)$saved['menu_placement'];
+        }
+    }
+}
+$open_url = ($menu_placement === 'tasks') ? '/CAWorkshop' : '/Utilities/CAWorkshop';
+?&gt;
+
+&lt;div style="max-width: 720px; margin: 20px auto; padding: 22px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;"&gt;
+  &lt;div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1);"&gt;
+    &lt;div&gt;
+      &lt;h2 style="margin: 0 0 6px; font-size: 18px;"&gt;CA Workshop Settings&lt;/h2&gt;
+      &lt;p style="margin: 0; color: #8a9490; font-size: 12px;"&gt;Configure Unraid WebGUI integration, dashboard widget display, and navigation.&lt;/p&gt;
+    &lt;/div&gt;
+    &lt;a href="&lt;?=$open_url?&gt;" class="button" style="text-decoration:none; padding: 8px 14px; background: #2ea44f; color: #fff; border-radius: 6px; font-weight: 600; font-size: 12px;"&gt;Open CA Workshop ↗&lt;/a&gt;
+  &lt;/div&gt;
+
+  &lt;form id="cawSettingsForm" method="POST" action="/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin"&gt;
+    &lt;input type="hidden" name="csrf_token" value="&lt;?=$csrf_token?&gt;"&gt;
+
+    &lt;div style="margin-bottom: 20px;"&gt;
+      &lt;label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px;"&gt;Dashboard Widget Display&lt;/label&gt;
+      &lt;select name="dashboard_widget_enabled" style="width: 100%; max-width: 420px; padding: 8px 10px; border-radius: 5px; border: 1px solid #3e4451; background: #20242b; color: #fff;"&gt;
+        &lt;option value="1" &lt;?=$dashboard_widget ? 'selected' : ''?&gt;&gt;Enabled — Show pending approvals and approved apps on Dashboard&lt;/option&gt;
+        &lt;option value="0" &lt;?=!$dashboard_widget ? 'selected' : ''?&gt;&gt;Disabled — Hide widget tile from Dashboard&lt;/option&gt;
+      &lt;/select&gt;
+      &lt;div style="font-size: 11px; color: #8a9490; margin-top: 4px;"&gt;Controls whether the CA Workshop submission status widget appears on your main Unraid Dashboard.&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div style="margin-bottom: 24px;"&gt;
+      &lt;label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px;"&gt;WebGUI Navigation Placement&lt;/label&gt;
+      &lt;select name="menu_placement" style="width: 100%; max-width: 420px; padding: 8px 10px; border-radius: 5px; border: 1px solid #3e4451; background: #20242b; color: #fff;"&gt;
+        &lt;option value="tasks" &lt;?=$menu_placement === 'tasks' ? 'selected' : ''?&gt;&gt;Dedicated Menu Tab — Add 'CA Workshop' to top navigation bar&lt;/option&gt;
+        &lt;option value="utilities" &lt;?=$menu_placement === 'utilities' ? 'selected' : ''?&gt;&gt;Utilities Menu — Access via Tools → CA Workshop&lt;/option&gt;
+        &lt;option value="hidden" &lt;?=$menu_placement === 'hidden' ? 'selected' : ''?&gt;&gt;Plugins &amp;amp; Settings Only — Access from Settings/Plugins icons&lt;/option&gt;
+      &lt;/select&gt;
+      &lt;div style="font-size: 11px; color: #8a9490; margin-top: 4px;"&gt;Choose how you want to open CA Workshop in your Unraid WebGUI.&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div style="display: flex; align-items: center; gap: 14px; margin-top: 20px;"&gt;
+      &lt;button type="submit" id="cawSaveBtn" class="button" style="padding: 9px 18px; background: #e36209; color: #fff; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer;"&gt;Save Settings&lt;/button&gt;
+      &lt;span id="cawSaveStatus" style="font-size: 12px; color: #2ea44f;"&gt;&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/form&gt;
+&lt;/div&gt;
+
+&lt;script&gt;
+$('#cawSettingsForm').on('submit', function(e) {
+  e.preventDefault();
+  var btn = $('#cawSaveBtn');
+  var status = $('#cawSaveStatus');
+  btn.prop('disabled', true).text('Saving…');
+  status.text('').css('color', '#2ea44f');
+  
+  var enabled = $('select[name="dashboard_widget_enabled"]').val() === '1';
+  var placement = $('select[name="menu_placement"]').val();
+  var token = $('input[name="csrf_token"]').val();
+
+  $.ajax({
+    url: '/plugins/ca-workshop/api.php?path=/api/settings/unraid-plugin&amp;csrf_token=' + encodeURIComponent(token),
+    type: 'POST',
+    headers: { 'X-CA-Workshop': '1', 'X-CSRF-Token': token },
+    data: {
+      csrf_token: token,
+      payload: JSON.stringify({ dashboard_widget_enabled: enabled, menu_placement: placement })
+    },
+    dataType: 'json',
+    success: function(data) {
+      status.text('Settings saved. Refreshing Unraid WebGUI…');
+      setTimeout(function() {
+        location.reload();
+      }, 900);
+    },
+    error: function(xhr) {
+      btn.prop('disabled', false).text('Save Settings');
+      var err = xhr.responseJSON ? xhr.responseJSON.error : xhr.responseText;
+      status.css('color', '#cf222e').text('Error saving settings: ' + (err || 'Server error'));
+    }
+  });
 });
 &lt;/script&gt;
 </INLINE>

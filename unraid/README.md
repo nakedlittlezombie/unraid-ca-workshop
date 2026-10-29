@@ -50,7 +50,7 @@ When `/etc/unraid-version` or an installed Community Applications plugin is dete
 CA Workshop switches to Unraid host mode:
 
 - **Docker** uses the host Docker socket (`/var/run/docker.sock`) and reports the
-  Unraid Docker version in **Settings → Host runtime**. Container installs still use
+  Unraid Docker version in **Settings → Host runtime**. The local Docker sandbox view is hidden in Unraid plugin mode in favor of native Unraid Docker management. Container installs still use
   the app's loopback port publishing, resource limits, and volume safeguards.
 - **Plugins** use Unraid's own
   `/usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/plugin` command. CA Store
@@ -61,6 +61,7 @@ CA Workshop switches to Unraid host mode:
   public catalog; plugin installation is handed to the Unraid plugin manager.
 - **User templates** are detected at `/boot/config/plugins/dockerMan/templates-user`.
 - **Dashboard widget** integrates directly into Unraid's main Dashboard page (`CAWorkshopDashboard.page`), displaying your pending approvals and approved apps as icons with status indicators below each icon. Can be toggled on/off in CA Workshop Settings.
+- **Settings page** integrates under **Settings → User Utilities** (`CAWorkshopSettings.page`), allowing you to configure the Dashboard widget display and customize WebGUI navigation placement (Dedicated top-level menu tab, Tools/Utilities menu, or Hidden from main tabs).
 - Plugin/state data persists in `/boot/config/plugins/ca-workshop` instead of the
   RAM-backed plugin directory.
 

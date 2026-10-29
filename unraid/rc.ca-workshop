@@ -5,11 +5,28 @@ CONFIG_DIR="/boot/config/plugins/ca-workshop"
 PIDFILE="/var/run/ca-workshop.pid"
 LOGFILE="/var/log/ca-workshop.log"
 
+apply_menu_placement() {
+  local state_file="$CONFIG_DIR/.ca-workshop-state.json"
+  local page_file="$PLUGIN_DIR/CAWorkshop.page"
+  if [ -f "$state_file" ] && [ -f "$page_file" ]; then
+    local placement
+    placement=$(grep -o '"menu_placement": *"[^"]*"' "$state_file" 2>/dev/null | head -n1 | cut -d'"' -f4)
+    if [ "$placement" = "tasks" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="Tasks:50"/' "$page_file"
+    elif [ "$placement" = "hidden" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="None"/' "$page_file"
+    elif [ "$placement" = "utilities" ]; then
+      sed -i 's/^Menu="[^"]*"/Menu="Utilities:10"/' "$page_file"
+    fi
+  fi
+}
+
 start_service() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     return 0
   fi
   mkdir -p "$CONFIG_DIR" || return 1
+  apply_menu_placement
   if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required. Install Python 3 (for example with NerdTools) and restart CA Workshop." >> "$LOGFILE"
     return 1
