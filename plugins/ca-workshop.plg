@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29o" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29o. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="ca-workshop" author="CA Workshop contributors" version="2026.10.29p" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29p. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -3132,5 +3132,5 @@ rm -rf /usr/local/emhttp/plugins/ca-workshop
 rm -f /boot/config/plugins/ca-workshop/ca-workshop.png
 </INLINE>
 </FILE>
-<RUN>/bin/bash -c 'mkdir -p /boot/config/plugins/ca-workshop &amp;&amp; cp -f /usr/local/emhttp/plugins/ca-workshop/ca-workshop.png /boot/config/plugins/ca-workshop/ca-workshop.png 2&gt;/dev/null; chmod +x /etc/rc.d/rc.ca-workshop /usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop &amp;&amp; /etc/rc.d/rc.ca-workshop restart'</RUN>
+<RUN>/bin/bash -c 'mkdir -p /boot/config/plugins/ca-workshop &amp;&amp; rm -rf /usr/local/emhttp/plugins/ca-workshop/* &amp;&amp; cp -f /usr/local/emhttp/plugins/ca-workshop/ca-workshop.png /boot/config/plugins/ca-workshop/ca-workshop.png 2&gt;/dev/null; chmod +x /etc/rc.d/rc.ca-workshop /usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop &amp;&amp; /etc/rc.d/rc.ca-workshop restart'</RUN>
 </PLUGIN>

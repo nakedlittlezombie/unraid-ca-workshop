@@ -121,7 +121,7 @@ def main() -> int:
         attributes.append(f'support="{escape(args.support_url, {chr(34): "&quot;"})}"')
 
     run = (
-        "/bin/bash -c 'mkdir -p /boot/config/plugins/ca-workshop && "
+        "/bin/bash -c 'mkdir -p /boot/config/plugins/ca-workshop && rm -rf /usr/local/emhttp/plugins/ca-workshop/* && "
         "cp -f /usr/local/emhttp/plugins/ca-workshop/ca-workshop.png /boot/config/plugins/ca-workshop/ca-workshop.png 2>/dev/null; "
         "chmod +x /etc/rc.d/rc.ca-workshop /usr/local/emhttp/plugins/ca-workshop/rc.ca-workshop && "
         "/etc/rc.d/rc.ca-workshop restart'"
