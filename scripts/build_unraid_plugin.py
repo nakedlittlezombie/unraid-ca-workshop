@@ -38,6 +38,8 @@ def plugin_index_html() -> str:
     source = re.sub(r'<button class="nav" data-page="sandbox"><span>.*?</span> Docker sandbox</button>\s*', '', source)
     source = re.sub(r'<section id="sandbox" class="page">[\s\S]*?</section>\s*', '', source)
     source = re.sub(r'<section class="panel settings-card package-card">[\s\S]*?</section>\s*', '', source)
+    source = re.sub(r'<button class="nav" data-page="ca-browser"><span>.*?</span> CA Store</button>\s*', '', source)
+    source = re.sub(r'<section id="ca-browser" class="page">[\s\S]*?</section>\s*', '', source)
     source = re.sub(r'<div id="packageOverlay" class="overlay hidden">[\s\S]*?</div></div>\s*', '', source)
 
     bootstrap = (
