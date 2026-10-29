@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29s" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
-<CHANGES>CA Workshop 2026.10.29s. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
+<PLUGIN name="Community Apps Workshop" author="nakedlittlezombie" version="2026.10.29t" launch="Settings/CAWorkshopSettings" icon="ca-workshop.png" pluginURL="https://raw.githubusercontent.com/nakedlittlezombie/unraid-ca-workshop/main/plugins/ca-workshop.plg" support="https://github.com/nakedlittlezombie/unraid-ca-workshop">
+<CHANGES>CA Workshop 2026.10.29t. Local Community Applications maintainer workspace. Runs a loopback-only service and uses the Unraid Docker socket and plugin manager when installed on Unraid.</CHANGES>
 <FILE Name="/usr/local/emhttp/plugins/ca-workshop/server.py">
 <INLINE>#!/usr/bin/env python3
 """Local API for CA Workshop. Bind to loopback only; no external network exposure."""
@@ -2508,7 +2508,7 @@ if __name__ == "__main__":
   &lt;link rel="stylesheet" href="style.css"&gt;
 &lt;/head&gt;
 &lt;body&gt;
-  &lt;aside class="rail"&gt;&lt;div class="brand"&gt;&lt;img src="ca-workshop.png" alt="CA Workshop" style="height:32px;width:auto;"&gt;&lt;span&gt;WORKSHOP&lt;/span&gt;&lt;/div&gt;&lt;div class="rail-label"&gt;WORKSPACE&lt;/div&gt;
+  &lt;aside class="rail"&gt;&lt;div class="brand"&gt;&lt;img src="ca-workshop.png" alt="CA Workshop" style="height:32px;width:auto;"&gt;&lt;span&gt;WORKSHOP&lt;/span&gt;&lt;small style="font-size:.65rem;color:var(--muted);display:block;margin-top:-2px"&gt;Community Apps Workshop · v2026.10.29s&lt;/small&gt;&lt;/div&gt;
     &lt;button class="nav active" data-page="repository"&gt;&lt;span&gt;▦&lt;/span&gt; Repository&lt;/button&gt;&lt;button class="nav" data-page="applications"&gt;&lt;span&gt;▣&lt;/span&gt; Applications&lt;/button&gt;&lt;div class="nav-tree" aria-label="Application pages"&gt;&lt;button class="nav-tree-item" data-page="applications"&gt;My apps&lt;/button&gt;&lt;button class="nav-tree-item" data-page="template-editor"&gt;Editor&lt;/button&gt;&lt;button class="nav-tree-item" data-page="application-stats"&gt;Statistics&lt;/button&gt;&lt;/div&gt;&lt;button class="nav" data-page="plugins"&gt;&lt;span&gt;⌘&lt;/span&gt; Plugins&lt;/button&gt;&lt;div class="nav-tree" aria-label="Plugin pages"&gt;&lt;button class="nav-tree-item" data-page="plugins"&gt;My plugins&lt;/button&gt;&lt;button class="nav-tree-item" data-page="plugin-stats"&gt;Statistics&lt;/button&gt;&lt;/div&gt;&lt;button class="nav" data-page="submissions"&gt;&lt;span&gt;⇧&lt;/span&gt; Submissions&lt;/button&gt;&lt;div class="rail-label tools-label"&gt;TOOLS&lt;/div&gt;&lt;button class="nav" data-page="ca-shim"&gt;&lt;span&gt;▤&lt;/span&gt; Repository preview&lt;/button&gt;&lt;button class="nav" data-page="settings"&gt;&lt;span&gt;⚙&lt;/span&gt; Settings&lt;/button&gt;&lt;button class="nav" data-page="docs"&gt;&lt;span&gt;⌘&lt;/span&gt; Unraid docs&lt;/button&gt;
     &lt;div class="rail-bottom"&gt;&lt;span class="avatar"&gt;M&lt;/span&gt;&lt;span&gt;&lt;b&gt;Local workspace&lt;/b&gt;&lt;small&gt;Not connected to CA&lt;/small&gt;&lt;/span&gt;&lt;span class="green-dot"&gt;&lt;/span&gt;&lt;/div&gt;
   &lt;/aside&gt;
